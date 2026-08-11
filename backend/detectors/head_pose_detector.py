@@ -3,29 +3,24 @@ import numpy as np
 
 class HeadPoseDetector:
     def __init__(self):
-        # 3D generic facial model points
         self.model_points = np.array([
-            (0.0, 0.0, 0.0),             # Nose tip (Landmark 1)
-            (0.0, -330.0, -65.0),        # Chin (Landmark 152)
-            (-225.0, 170.0, -135.0),     # Left eye corner (Landmark 33)
-            (225.0, 170.0, -135.0),      # Right eye corner (Landmark 263)
-            (-150.0, -150.0, -125.0),    # Left Mouth corner (Landmark 61)
-            (150.0, -150.0, -125.0)      # Right mouth corner (Landmark 291)
+            (0.0, 0.0, 0.0),             # Nose tip
+            (0.0, -330.0, -65.0),        # Chin
+            (-225.0, 170.0, -135.0),     # Left eye corner
+            (225.0, 170.0, -135.0),      # Right eye corner
+            (-150.0, -150.0, -125.0),    # Left mouth corner
+            (150.0, -150.0, -125.0)      # Right mouth corner
         ], dtype=np.float64)
 
-    def estimate_pose(self, frame: np.ndarray, landmarks_3d: list = None) -> dict:
+    def estimate_pose(self, frame: np.ndarray, landmarks_3d: list = None, is_usable_frame: bool = True) -> dict:
         """
-        Estimates yaw, pitch, roll from MediaPipe 468 3D landmarks.
-        yaw: > 0 right, < 0 left
-        pitch: > 0 down, < 0 up
+        Estimates yaw, pitch, roll from 3D landmarks. Returns HEAD_POSE_UNKNOWN if frame unusable.
         """
-        if frame is None or landmarks_3d is None or len(landmarks_3d) < 468:
-            return {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "direction": "CENTER", "confidence": 0.0}
+        if not is_usable_frame or frame is None or landmarks_3d is None or len(landmarks_3d) < 468:
+            return {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "direction": "HEAD_POSE_UNKNOWN", "confidence": 0.0}
 
         height, width = frame.shape[:2]
 
-        # Extract 6 key facial feature points from MediaPipe landmark list
-        # Indices: 1 (nose), 152 (chin), 33 (left eye corner), 263 (right eye corner), 61 (left mouth), 291 (right mouth)
         image_points = np.array([
             (landmarks_3d[1][0], landmarks_3d[1][1]),
             (landmarks_3d[152][0], landmarks_3d[152][1]),
@@ -54,7 +49,7 @@ class HeadPoseDetector:
         )
 
         if not success:
-            return {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "direction": "CENTER", "confidence": 0.0}
+            return {"yaw": 0.0, "pitch": 0.0, "roll": 0.0, "direction": "HEAD_POSE_UNKNOWN", "confidence": 0.0}
 
         rmat, _ = cv2.Rodrigues(rvec)
         proj_matrix = np.hstack((rmat, tvec))
@@ -62,7 +57,6 @@ class HeadPoseDetector:
 
         pitch, yaw, roll = [float(angle[0]) for angle in euler_angles]
 
-        # Determine head direction
         direction = "CENTER"
         if yaw > 22.0:
             direction = "HEAD_TURNED_RIGHT"

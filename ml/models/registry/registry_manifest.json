@@ -1,0 +1,21 @@
+{
+  "active_model": "xgboost_baseline_v1",
+  "models": {
+    "xgboost_baseline_v1": {
+      "model_name": "XGBoost Baseline Temporal Behavior Classifier",
+      "model_version": "v1.0.0",
+      "dataset_version": "v1.0",
+      "feature_schema_version": "v1.2.0",
+      "preprocessing_version": "v1.0",
+      "training_date": "2026-08-12",
+      "active": true,
+      "calibration_status": "CALIBRATED_ISOTONIC",
+      "validation_metrics": {
+        "macro_f1": 0.88,
+        "phone_use_recall": 0.91,
+        "phone_use_precision": 0.89,
+        "normal_fpr": 0.02
+      }
+    }
+  }
+}

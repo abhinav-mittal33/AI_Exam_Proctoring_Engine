@@ -1,38 +1,42 @@
 app:
   name: "AI Exam Proctoring Engine"
-  version: "1.0.0"
+  version: "1.2.0"
 
 pipeline:
   target_fps: 30
   face_interval_frames: 1       # 30 FPS
-  pose_gaze_interval_frames: 3   # 10 FPS
-  object_interval_frames: 6     # 5 FPS
+  pose_gaze_interval_frames: 1   # 30 FPS
+  object_interval_frames: 2     # 15 FPS
 
 face:
-  confidence_threshold: 0.5
-  missing_grace_period_seconds: 3.0
-  multi_face_grace_period_seconds: 2.0
+  detection_confidence: 0.50
+  presence_confidence: 0.60
+  tracking_confidence: 0.60
+  missing_grace_period_seconds: 2.5
+  multi_face_min_duration_seconds: 0.75
 
 head_pose:
   enabled: true
-  yaw_threshold: 25.0    # degrees left/right
-  pitch_threshold: 20.0  # degrees up/down
-  roll_threshold: 25.0   # degrees tilt
+  yaw_observation_degrees: 20.0
+  yaw_event_degrees: 30.0
+  pitch_observation_degrees: 15.0
+  pitch_event_degrees: 25.0
+  min_duration_seconds: 2.5
 
 gaze:
   enabled: true
-  horizontal_threshold: 0.35  # iris offset relative to eye width
-  vertical_threshold: 0.35
-  minimum_duration_seconds: 2.0
+  min_duration_seconds: 3.0
 
 mouth:
   enabled: true
-  mar_threshold: 0.40   # Mouth Aspect Ratio
-  minimum_duration_seconds: 1.5
+  mar_threshold: 0.32
+  min_duration_seconds: 1.5
 
 objects:
   enabled: true
-  confidence_threshold: 0.45
+  yolo_initial_confidence: 0.55
+  min_persistence_seconds: 1.5
+  rolling_window_frames: 20
   prohibited_classes:
     - "cell phone"
     - "book"
@@ -45,25 +49,33 @@ audio:
   enabled: true
   energy_threshold: 0.05
 
+evidence:
+  severity_caps:
+    LOW: 25.0
+    MODERATE: 50.0
+    HIGH: 75.0
+    CRITICAL: 100.0
+  category_caps:
+    HEAD: 15.0
+    GAZE: 20.0
+    MOUTH: 10.0
+    OBJECT: 40.0
+    FACE: 40.0
+    IDENTITY: 100.0
+    CAMERA: 30.0
+  base_severities:
+    LOW: 10.0
+    MODERATE: 25.0
+    HIGH: 45.0
+    CRITICAL: 85.0
+
 risk:
-  weights:
-    FACE_MISSING: 25
-    MULTIPLE_FACES: 35
-    HEAD_TURNED_LEFT: 10
-    HEAD_TURNED_RIGHT: 10
-    HEAD_TURNED_UP: 10
-    HEAD_TURNED_DOWN: 10
-    GAZE_AWAY: 8
-    MOUTH_MOVEMENT: 10
-    POSSIBLE_SPEECH: 20
-    PHONE_DETECTED: 45
-    PROHIBITED_OBJECT_DETECTED: 35
-    AUDIO_ACTIVITY: 10
-    CAMERA_INTERRUPTED: 30
-    IDENTITY_MISMATCH: 60
-  decay_rate_per_sec: 1.0
+  decay_half_life_minutes: 20.0
+  smoothing_alpha: 0.25
+  correlation_discount: 0.50
   risk_levels:
-    NORMAL: [0, 20]
-    LOW_RISK: [21, 40]
-    REVIEW: [41, 65]
-    HIGH_PRIORITY_REVIEW: [66, 1000]
+    NORMAL: [0, 19]
+    LOW_RISK: [20, 39]
+    REVIEW: [40, 59]
+    HIGH_PRIORITY_REVIEW: [60, 79]
+    CRITICAL_REVIEW: [80, 100]
