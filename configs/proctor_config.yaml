@@ -1,0 +1,69 @@
+app:
+  name: "AI Exam Proctoring Engine"
+  version: "1.0.0"
+
+pipeline:
+  target_fps: 30
+  face_interval_frames: 1       # 30 FPS
+  pose_gaze_interval_frames: 3   # 10 FPS
+  object_interval_frames: 6     # 5 FPS
+
+face:
+  confidence_threshold: 0.5
+  missing_grace_period_seconds: 3.0
+  multi_face_grace_period_seconds: 2.0
+
+head_pose:
+  enabled: true
+  yaw_threshold: 25.0    # degrees left/right
+  pitch_threshold: 20.0  # degrees up/down
+  roll_threshold: 25.0   # degrees tilt
+
+gaze:
+  enabled: true
+  horizontal_threshold: 0.35  # iris offset relative to eye width
+  vertical_threshold: 0.35
+  minimum_duration_seconds: 2.0
+
+mouth:
+  enabled: true
+  mar_threshold: 0.40   # Mouth Aspect Ratio
+  minimum_duration_seconds: 1.5
+
+objects:
+  enabled: true
+  confidence_threshold: 0.45
+  prohibited_classes:
+    - "cell phone"
+    - "book"
+    - "laptop"
+    - "remote"
+    - "keyboard"
+    - "mouse"
+
+audio:
+  enabled: true
+  energy_threshold: 0.05
+
+risk:
+  weights:
+    FACE_MISSING: 25
+    MULTIPLE_FACES: 35
+    HEAD_TURNED_LEFT: 10
+    HEAD_TURNED_RIGHT: 10
+    HEAD_TURNED_UP: 10
+    HEAD_TURNED_DOWN: 10
+    GAZE_AWAY: 8
+    MOUTH_MOVEMENT: 10
+    POSSIBLE_SPEECH: 20
+    PHONE_DETECTED: 45
+    PROHIBITED_OBJECT_DETECTED: 35
+    AUDIO_ACTIVITY: 10
+    CAMERA_INTERRUPTED: 30
+    IDENTITY_MISMATCH: 60
+  decay_rate_per_sec: 1.0
+  risk_levels:
+    NORMAL: [0, 20]
+    LOW_RISK: [21, 40]
+    REVIEW: [41, 65]
+    HIGH_PRIORITY_REVIEW: [66, 1000]
