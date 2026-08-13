@@ -49,11 +49,55 @@ CLIENT_FLAG_REASONS = {
     "NO_FACE":         "No face visible — candidate left the camera frame",
     "MULTIPLE_FACES":  "More than one person visible",
     "EYES_CLOSED":     "Eyes closed for a sustained period",
+    "HEAD_TILT":       "Head tilted to one side — possible off-screen reference",
+    "GAZE_OFF_SCREEN": "Eyes directed away from the screen",
     "TAB_SWITCH":      "Tab switched / browser minimized — left exam interface",
     "EXIT_FULLSCREEN": "Exited fullscreen mode — potential screen share/app switch",
     "SHORTCUT_ATTEMPT": "Keyboard shortcut / right-click block — possible copy-paste attempt",
     "AUDIO_TALKING":   "Loud talking / background voice detected by microphone",
 }
+
+# How severe each kind of violation is. This drives how long the same violation
+# is suppressed after being reported: a second person in the room is worth
+# repeating quickly, while someone glancing down is not worth saying every few
+# seconds. Anything unlisted is treated as MEDIUM.
+SEVERITY_COOLDOWNS = {
+    "CRITICAL": 6.0,
+    "HIGH": 12.0,
+    "MEDIUM": 25.0,
+    "LOW": 60.0,
+}
+
+SEVERITY_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
+REASON_SEVERITY = {
+    CLIENT_FLAG_REASONS["MULTIPLE_FACES"]:   "CRITICAL",
+    CLIENT_FLAG_REASONS["NO_FACE"]:          "HIGH",
+    CLIENT_FLAG_REASONS["TALKING"]:          "HIGH",
+    CLIENT_FLAG_REASONS["AUDIO_TALKING"]:    "HIGH",
+    CLIENT_FLAG_REASONS["TAB_SWITCH"]:       "HIGH",
+    CLIENT_FLAG_REASONS["EXIT_FULLSCREEN"]:  "HIGH",
+    CLIENT_FLAG_REASONS["SHORTCUT_ATTEMPT"]: "HIGH",
+    CLIENT_FLAG_REASONS["LOOKING_AWAY"]:     "MEDIUM",
+    CLIENT_FLAG_REASONS["LOOKING_DOWN"]:     "MEDIUM",
+    CLIENT_FLAG_REASONS["HEAD_TILT"]:        "MEDIUM",
+    CLIENT_FLAG_REASONS["GAZE_OFF_SCREEN"]:  "MEDIUM",
+    CLIENT_FLAG_REASONS["EYES_CLOSED"]:      "LOW",
+}
+
+
+def severity_of(reason: str) -> str:
+    """Severity for a reason string, including the ones built at detection time."""
+    if reason in REASON_SEVERITY:
+        return REASON_SEVERITY[reason]
+    lowered = reason.lower()
+    if "identity mismatch" in lowered or "multiple faces" in lowered:
+        return "CRITICAL"
+    if "held in hand" in lowered:
+        return "HIGH"
+    if any(word in lowered for word in ("phone", "book", "laptop", "no face")):
+        return "HIGH"
+    return "MEDIUM"
 
 
 @dataclass
@@ -330,6 +374,12 @@ class CheatingDetector:
                 result["cheating"]       = True
                 result["warning_issued"] = True
                 result["reasons"]        = deduped
+                # Report the worst thing in this batch so the proctor can triage
+                # a second person in the room ahead of someone glancing down.
+                result["severity"] = max(
+                    (severity_of(r) for r in deduped),
+                    key=lambda s: SEVERITY_ORDER.index(s) if s in SEVERITY_ORDER else 1,
+                )
                 if session.warning_count >= 3:
                     session.is_kicked = True
                     result["kick"]    = True
@@ -467,12 +517,24 @@ class CheatingDetector:
                 continue
         return False
 
-    def _deduplicate_reasons(self, reasons: list, session: ParticipantState, now: float, cooldown_secs: float = 12.0) -> list:
+    def _deduplicate_reasons(self, reasons: list, session: ParticipantState, now: float,
+                             cooldown_secs: float = None) -> list:
+        """
+        Suppresses a violation that was reported recently.
+
+        The wait depends on how serious it is rather than being one flat number:
+        a second person in the room is worth repeating within seconds, whereas
+        someone glancing down does not need saying every few seconds. That flat
+        12s was both too slow for the serious cases and too chatty for the minor
+        ones.
+        """
         deduped = []
         for reason in reasons:
-            tag  = " ".join(reason.split()[:3]).lower()
+            tag = " ".join(reason.split()[:3]).lower()
+            wait = cooldown_secs if cooldown_secs is not None else \
+                SEVERITY_COOLDOWNS.get(severity_of(reason), 25.0)
             last = session.last_warned.get(tag, 0)
-            if now - last >= cooldown_secs:
+            if now - last >= wait:
                 session.last_warned[tag] = now
                 deduped.append(reason)
         return deduped

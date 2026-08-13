@@ -61,8 +61,42 @@ since anything computed in a candidate's own browser can be tampered with:
 
 Browser verdicts arrive already debounced by hysteresis buffers: a signal must hold
 for several consecutive frames to count, and decays faster than it builds, so one
-glance away is not a warning. Repeat detections of the same kind are then suppressed
-server-side for 12s. Three warnings removes a candidate automatically.
+glance away is not a warning.
+
+### Calibration
+
+The first ~3 seconds of an exam learn the candidate's resting posture (median yaw,
+pitch, roll, mouth opening and eye opening). Every pose threshold afterwards is a
+deviation from *their* neutral, not an absolute angle. Absolute limits punished
+anyone who naturally sits at an angle or has a webcam mounted off-centre, which was
+the main source of false positives.
+
+| Signal | Fires at | Sustained for |
+|---|---|---|
+| Head turned | 22° off resting yaw | 12 frames (~0.8s) |
+| Looking down | 18° off resting pitch | 14 frames (~0.9s) |
+| Head tilted sideways | 20° off resting roll | 14 frames (~0.9s) |
+| Eyes off screen | 0.16 iris offset | 14 frames |
+| Talking | 3 mouth open/close cycles in 2.5s | 4 frames |
+| Second person | any extra face | 3 frames (~0.2s) |
+| Eyes closed | 62% of resting opening | 18 frames |
+
+Talking is counted as *cycles* rather than raw mouth openness. Quiet speech barely
+opens the mouth and was being missed entirely by a fixed openness threshold, while a
+single yawn — one long opening — no longer counts, because it is one cycle, not several.
+
+### Severity
+
+Violations carry a severity that decides how soon the same one may be reported again:
+
+| Severity | Examples | Repeat after |
+|---|---|---|
+| CRITICAL | second person, identity mismatch | 6s |
+| HIGH | phone or book, talking, tab switch | 12s |
+| MEDIUM | head turned, looking down, head tilt | 25s |
+| LOW | eyes closed | 60s |
+
+Three warnings removes a candidate automatically.
 
 If the browser engine fails to load, the server falls back to estimating pose from
 YuNet's five points. That fallback is noticeably noisier — it is a safety net, not
