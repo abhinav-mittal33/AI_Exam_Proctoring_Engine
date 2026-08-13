@@ -60,6 +60,7 @@ proctor/
 models/                ONNX weights (YuNet, SFace, YOLOv8n)
 static/                Frontend (single page, vanilla JS)
 data/                  SQLite databases - gitignored, never commit
+registered_faces/      Reference photos - gitignored, never commit
 ```
 
 ## Configuration

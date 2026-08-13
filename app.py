@@ -16,12 +16,16 @@ import random
 import threading
 import time
 
+import cv2
 from flask import Flask, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit, join_room as sio_join_room
 
 from proctor.db_manager import db_manager
 from proctor.face_engine import face_engine
 from proctor.detect import cheating_detector
+
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+FACES_DIR = os.path.join(ROOT_DIR, "registered_faces")
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "proctor-exam-dev-secret")
@@ -99,8 +103,21 @@ def api_register():
     if not ok:
         return jsonify({"ok": False, "error": err}), 400
 
+    # Keep the reference photo alongside the encoding. Matching only needs the
+    # encoding, but a human reviewing a disputed result needs to see the face
+    # the system was comparing against.
+    image_path = None
+    try:
+        os.makedirs(FACES_DIR, exist_ok=True)
+        rel_path = os.path.join("registered_faces", f"{enrollment}.jpg")
+        cv2.imwrite(os.path.join(ROOT_DIR, rel_path), face_engine.decode_base64_image(image))
+        image_path = rel_path
+    except Exception as e:
+        # A missing photo must not block enrollment; the encoding is what matters.
+        print(f"[Register] could not save reference photo for {enrollment}: {e}")
+
     db_manager.create_user_credentials(enrollment, password, name)
-    db_manager.store_face_record(enrollment, encoding)
+    db_manager.store_face_record(enrollment, encoding, image_path=image_path)
     return jsonify({"ok": True, "message": f"{name} registered."})
 
 

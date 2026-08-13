@@ -7,3 +7,6 @@ venv/
 data/
 *.db
 .env
+
+# Reference photos of real people - keep out of git.
+registered_faces/
