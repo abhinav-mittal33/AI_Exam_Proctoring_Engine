@@ -112,14 +112,26 @@ class HysteresisBuffer {
   }
 }
 
-// ---------- thresholds (proctor-x exam page values) ----------
+// ---------- thresholds ----------
+//
+// Pose limits are deviations from the candidate's own calibrated resting
+// posture, not absolute angles. Absolute limits punish anyone who naturally
+// sits at an angle or has their webcam mounted off-centre, which is where most
+// of the false positives came from.
 
-const YAW_LIMIT = 10;        // degrees before the head counts as turned
-const PITCH_LIMIT = 12;      // degrees before it counts as looking down
-const GAZE_LIMIT = 0.12;     // iris offset before the eyes count as off-screen
-const MAR_TALKING = 0.18;    // mouth openness that may be speech
-const MAR_VARIANCE = 0.003;  // movement of the mouth, to separate speech from a yawn
-const EAR_CLOSED = 0.15;     // eyes effectively shut
+const CALIBRATION_FRAMES = 45;   // ~3s at 15fps to learn a resting posture
+const YAW_LIMIT = 22;            // degrees off resting before the head counts as turned
+const PITCH_LIMIT = 18;          // degrees off resting before it counts as looking down
+const ROLL_LIMIT = 20;           // degrees off resting before the head counts as tilted
+const GAZE_LIMIT = 0.16;         // iris offset before the eyes count as off-screen
+const EAR_CLOSED_RATIO = 0.62;   // fraction of resting eye opening that counts as shut
+
+// Speech is rhythmic: the jaw opens and closes repeatedly. Counting those cycles
+// catches quiet talking that never opens the mouth far, while ignoring a single
+// yawn or a mouth simply held open - both of which are one cycle, not several.
+const MAR_SPEECH_DELTA = 0.030;  // opening above resting that counts as "open"
+const SPEECH_WINDOW_MS = 2500;   // window over which cycles are counted
+const SPEECH_MIN_CYCLES = 3;     // open/close cycles in that window to call it speech
 
 // ---------- engine ----------
 
@@ -130,18 +142,39 @@ export class ProctorXEngine {
     this.handLandmarker = null;
     this.loopId = null;
 
-    this.state = { yawEma: 0, pitchEma: 0, marHistory: [] };
-
-    this.buffers = {
-      lookingAway: new HysteresisBuffer(6, 6, 2),
-      lookingDown: new HysteresisBuffer(10, 10, 2),
-      noFace: new HysteresisBuffer(12, 12, 2),
-      multiFace: new HysteresisBuffer(5, 4, 1),
-      talking: new HysteresisBuffer(8, 6, 2),
-      eyesClosed: new HysteresisBuffer(10, 10, 2),
+    this.state = {
+      yawEma: 0, pitchEma: 0, rollEma: 0,
+      marSamples: [],     // {t, mar} over the speech window
+      mouthOpen: false,   // for counting open/close cycles
+      cycles: [],         // timestamps of mouth openings
     };
 
-    this.latest = { flags: [], hands: [], metrics: {} };
+    // Resting posture, learned in the first few seconds and then used as the
+    // origin every pose measurement is compared against.
+    this.calibration = { samples: [], done: false, neutral: null };
+
+    // Frames each signal must hold before it counts. Serious, unambiguous things
+    // (a second person) fire fast; subjective ones need more evidence.
+    this.buffers = {
+      lookingAway: new HysteresisBuffer(14, 12, 3),
+      lookingDown: new HysteresisBuffer(16, 14, 3),
+      headTilt: new HysteresisBuffer(16, 14, 3),
+      gazeOff: new HysteresisBuffer(16, 14, 3),
+      noFace: new HysteresisBuffer(12, 10, 2),
+      multiFace: new HysteresisBuffer(5, 3, 1),
+      talking: new HysteresisBuffer(6, 4, 2),
+      eyesClosed: new HysteresisBuffer(20, 18, 2),
+    };
+
+    this.latest = { flags: [], hands: [], metrics: {}, calibrating: true };
+  }
+
+  /** Median is used over mean so a stray frame cannot skew the resting pose. */
+  static median(values) {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
   }
 
   async init() {
@@ -158,7 +191,13 @@ export class ProctorXEngine {
       outputFaceBlendshapes: true,
       outputFacialTransformationMatrixes: true,
       runningMode: 'VIDEO',
-      numFaces: 2,
+      // Look for more than two people, and lower the bar for spotting them: a
+      // second person leaning into frame is usually partly cut off or turned
+      // away, and at the default confidence they were being missed entirely.
+      numFaces: 4,
+      minFaceDetectionConfidence: 0.35,
+      minFacePresenceConfidence: 0.35,
+      minTrackingConfidence: 0.35,
     });
 
     this.handLandmarker = await HandLandmarker.createFromOptions(fileset, {
@@ -205,44 +244,88 @@ export class ProctorXEngine {
     const hands = this.handLandmarker.detectForVideo(videoEl, now);
 
     const faceCount = faces.faceLandmarks ? faces.faceLandmarks.length : 0;
-    let lookingAway = false, lookingDown = false, talking = false, eyesClosed = false;
+    let lookingAway = false, lookingDown = false, headTilt = false;
+    let gazeOff = false, talking = false, eyesClosed = false;
     const metrics = { faces: faceCount };
 
-    if (faceCount === 1) {
+    if (faceCount >= 1) {
       const lm = faces.faceLandmarks[0];
       const matrix = faces.facialTransformationMatrixes && faces.facialTransformationMatrixes[0];
 
+      let yaw = 0, pitch = 0, roll = 0;
       if (matrix) {
         const pose = getHeadPose(matrix.data || matrix);
         this.state.yawEma = calculateEMA(pose.yaw, this.state.yawEma);
         this.state.pitchEma = calculateEMA(pose.pitch, this.state.pitchEma);
-        metrics.yaw = +this.state.yawEma.toFixed(1);
-        metrics.pitch = +this.state.pitchEma.toFixed(1);
+        this.state.rollEma = calculateEMA(pose.roll, this.state.rollEma);
+        yaw = this.state.yawEma;
+        pitch = this.state.pitchEma;
+        roll = this.state.rollEma;
       }
 
       const gaze = getGaze(lm);
       const ear = getEAR(lm);
       const mar = getMAR(lm);
+
+      // --- calibration: learn this candidate's resting posture first ---
+      if (!this.calibration.done) {
+        this.calibration.samples.push({ yaw, pitch, roll, mar, ear });
+        if (this.calibration.samples.length >= CALIBRATION_FRAMES) {
+          const s = this.calibration.samples;
+          const pick = (key) => ProctorXEngine.median(s.map((x) => x[key]));
+          this.calibration.neutral = {
+            yaw: pick('yaw'), pitch: pick('pitch'), roll: pick('roll'),
+            mar: pick('mar'), ear: pick('ear'),
+          };
+          this.calibration.done = true;
+          console.log('[proctor-x] calibrated resting posture:', this.calibration.neutral);
+        }
+        // Face count still matters during calibration - a second person present
+        // from the start is exactly the case worth catching.
+        this.buffers.noFace.update(false);
+        this.buffers.multiFace.update(faceCount > 1);
+        this.latest = {
+          flags: this.buffers.multiFace.isTriggered ? ['MULTIPLE_FACES'] : [],
+          hands: [],
+          metrics: { ...metrics, calibrating: true },
+          calibrating: true,
+        };
+        return;
+      }
+
+      const n = this.calibration.neutral;
+      const yawDev = Math.abs(yaw - n.yaw);
+      const pitchDev = Math.abs(pitch - n.pitch);
+      const rollDev = Math.abs(roll - n.roll);
+
+      metrics.yawDev = +yawDev.toFixed(1);
+      metrics.pitchDev = +pitchDev.toFixed(1);
+      metrics.rollDev = +rollDev.toFixed(1);
       metrics.gazeYaw = +gaze.gazeYaw.toFixed(3);
       metrics.ear = +ear.toFixed(3);
       metrics.mar = +mar.toFixed(3);
 
-      // Mouth movement over a short window separates speech from a held-open mouth.
-      const history = this.state.marHistory;
-      history.push(mar);
-      if (history.length > 8) history.shift();
-      const avg = history.reduce((a, b) => a + b, 0) / history.length;
-      const variance = history.reduce((a, b) => a + Math.pow(b - avg, 2), 0) / history.length;
+      lookingAway = yawDev > YAW_LIMIT;
+      lookingDown = pitchDev > PITCH_LIMIT;
+      headTilt = rollDev > ROLL_LIMIT;
+      gazeOff = Math.abs(gaze.gazeYaw) > GAZE_LIMIT || Math.abs(gaze.gazePitch) > GAZE_LIMIT;
+      eyesClosed = ear < n.ear * EAR_CLOSED_RATIO;
 
-      lookingAway = Math.abs(this.state.yawEma) > YAW_LIMIT || Math.abs(gaze.gazeYaw) > GAZE_LIMIT;
-      lookingDown = Math.abs(this.state.pitchEma) > PITCH_LIMIT || Math.abs(gaze.gazePitch) > GAZE_LIMIT;
-      talking = mar > MAR_TALKING && variance > MAR_VARIANCE;
-      eyesClosed = ear < EAR_CLOSED;
+      // --- speech: count open/close cycles rather than raw openness ---
+      // A mouth held open, or one yawn, is a single cycle. Talking is several.
+      const openNow = mar > n.mar + MAR_SPEECH_DELTA;
+      if (openNow && !this.state.mouthOpen) this.state.cycles.push(now);
+      this.state.mouthOpen = openNow;
+      this.state.cycles = this.state.cycles.filter((t) => now - t <= SPEECH_WINDOW_MS);
+      talking = this.state.cycles.length >= SPEECH_MIN_CYCLES;
+      metrics.speechCycles = this.state.cycles.length;
     }
 
     const b = this.buffers;
     b.lookingAway.update(lookingAway);
     b.lookingDown.update(lookingDown);
+    b.headTilt.update(headTilt);
+    b.gazeOff.update(gazeOff);
     b.noFace.update(faceCount === 0);
     b.multiFace.update(faceCount > 1);
     b.talking.update(talking);
@@ -255,6 +338,12 @@ export class ProctorXEngine {
     if (b.multiFace.isTriggered) flags.push('MULTIPLE_FACES');
     if (b.talking.isTriggered) flags.push('TALKING');
     if (b.eyesClosed.isTriggered) flags.push('EYES_CLOSED');
+    if (b.headTilt.isTriggered) flags.push('HEAD_TILT');
+    // Reported only on its own: while the head is turned or tilted the iris
+    // estimate is unreliable, and pairing them would double-report one act.
+    if (b.gazeOff.isTriggered && !lookingAway && !lookingDown && !headTilt) {
+      flags.push('GAZE_OFF_SCREEN');
+    }
 
     // Hand boxes, padded 10%, so the server can tell whether a detected object is
     // actually being held rather than just present somewhere in the room.
@@ -279,7 +368,12 @@ export class ProctorXEngine {
     }
 
     metrics.hands = handBoxes.length;
-    this.latest = { flags, hands: handBoxes, metrics };
+    this.latest = { flags, hands: handBoxes, metrics, calibrating: false };
+  }
+
+  /** True until the resting posture has been learned. */
+  get isCalibrating() {
+    return !this.calibration.done;
   }
 
   /** Whatever the last processed frame concluded. */

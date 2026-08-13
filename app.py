@@ -147,7 +147,7 @@ def on_host_start_exam(data):
 
 
 @socketio.on("host-end-exam")
-def on_host_end_exam():
+def on_host_end_exam(data=None):
     code, exam = find_exam_by_sid(sid())
     if not exam or exam["host_sid"] != sid():
         return {"ok": False, "error": "Only the host can end the exam."}
@@ -218,6 +218,7 @@ def on_student_join(data):
         "last_frame": None,
         "last_flags": None,
         "last_hands": [],
+        "face_encoding": face_record["encoding"],
     }
     sio_join_room(code)
     cheating_detector.register_session(enrollment)
@@ -257,6 +258,7 @@ def on_student_frame(data):
     # to fall back rather than reading "no flags" as "nothing is wrong".
     student["last_flags"] = (data or {}).get("flags")
     student["last_hands"] = (data or {}).get("hands") or []
+    student["client_landmarks_active"] = (data or {}).get("client_landmarks_active", False)
 
     # The host's monitoring grid is just these frames - no WebRTC needed.
     socketio.emit("student-frame", {
@@ -286,6 +288,8 @@ def analyse_frame(student_sid, job):
         student["last_frame"],
         client_flags=student.get("last_flags"),
         hand_boxes=student.get("last_hands"),
+        client_landmarks_active=student.get("client_landmarks_active", False),
+        face_encoding=student.get("face_encoding")
     )
     if not result.get("ok"):
         return

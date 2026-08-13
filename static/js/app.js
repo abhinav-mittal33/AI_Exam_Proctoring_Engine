@@ -27,6 +27,12 @@ let liveStudentId = null;
 let proctorX = null;        // browser-side landmark engine (proctor-x port)
 let iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const tiles = {};            // student_id -> tile element
+const sessionFlags = new Set();
+let audioCtx = null;
+let audioSource = null;
+let audioAnalyser = null;
+let audioTimer = null;
+const AUDIO_THRESHOLD = 0.08;
 
 // ---------- camera ----------
 
@@ -202,8 +208,12 @@ $('btnSignin').addEventListener('click', () => {
     $('selfName').textContent = res.name + ' (You)';
     show('exam');
 
+    // Attempt to enter fullscreen
+    await enterFullscreen();
+
     await startCamera($('selfCam'));
-    await startProctorX();
+    startProctorX(); // Start client-side proctoring engine asynchronously
+    startAudioAnalysis(); // Start local audio analysis
     startFrameUploads(res.frame_interval || 3);
   });
 });
@@ -213,9 +223,10 @@ $('btnSignin').addEventListener('click', () => {
 async function startProctorX() {
   try {
     const { ProctorXEngine } = await import('/static/js/proctorx.js');
-    proctorX = new ProctorXEngine();
-    await proctorX.init();
-    proctorX.start($('selfCam'), 15);
+    const engine = new ProctorXEngine();
+    await engine.init();
+    engine.start($('selfCam'), 15);
+    proctorX = engine;
     console.log('[proctor-x] landmark engine running');
   } catch (err) {
     // The server still runs object and face-count detection on the uploaded
@@ -234,16 +245,58 @@ function startFrameUploads(intervalSecs) {
     if (!image) return;
 
     const payload = { image_data: image };
+    
+    // Gather and clear active event-driven flags
+    let currentFlags = Array.from(sessionFlags);
+    sessionFlags.clear();
+
+    // If they are not in fullscreen, keep adding the exit flag
+    if (!document.fullscreenElement) {
+      sessionFlags.add('EXIT_FULLSCREEN');
+      if (!currentFlags.includes('EXIT_FULLSCREEN')) {
+        currentFlags.push('EXIT_FULLSCREEN');
+      }
+    }
+
     if (proctorX) {
       const { flags, hands, metrics } = proctorX.snapshot();
-      payload.flags = flags;    // debounced verdicts from the landmark engine
+      currentFlags = currentFlags.concat(flags);
       payload.hands = hands;    // so the server can tell "held" from "in the room"
       payload.metrics = metrics;
     }
+    payload.flags = currentFlags;
+    payload.client_landmarks_active = !!proctorX;
     socket.emit('student-frame', payload);
   };
   send();
   frameTimer = setInterval(send, intervalSecs * 1000);
+}
+
+function triggerImmediateUpload() {
+  if (role === 'student' && camStream) {
+    const image = snapshot($('selfCam'), 0.7);
+    if (!image) return;
+    const payload = { image_data: image };
+    let currentFlags = Array.from(sessionFlags);
+    sessionFlags.clear();
+
+    if (!document.fullscreenElement) {
+      sessionFlags.add('EXIT_FULLSCREEN');
+      if (!currentFlags.includes('EXIT_FULLSCREEN')) {
+        currentFlags.push('EXIT_FULLSCREEN');
+      }
+    }
+
+    if (proctorX) {
+      const { flags, hands, metrics } = proctorX.snapshot();
+      currentFlags = currentFlags.concat(flags);
+      payload.hands = hands;
+      payload.metrics = metrics;
+    }
+    payload.flags = currentFlags;
+    payload.client_landmarks_active = !!proctorX;
+    socket.emit('student-frame', payload);
+  }
 }
 
 function stopFrameUploads() {
@@ -277,6 +330,8 @@ socket.on('proctor-warning', ({ warning_count, reasons, removed }) => {
 });
 
 $('btnLeaveExam').addEventListener('click', () => {
+  exitFullscreen();
+  stopAudioAnalysis();
   stopFrameUploads();
   stopCamera();
   socket.disconnect();
@@ -525,6 +580,8 @@ socket.on('signal', async ({ from, data }) => {
 // ---------- exam end ----------
 
 socket.on('exam-ended', ({ reason }) => {
+  exitFullscreen();
+  stopAudioAnalysis();
   stopFrameUploads();
   stopCamera();
   if (studentPeer) { studentPeer.close(); studentPeer = null; }
@@ -539,6 +596,181 @@ function escapeHtml(str) {
   div.textContent = str == null ? '' : String(str);
   return div.innerHTML;
 }
+
+async function enterFullscreen() {
+  const elem = document.documentElement;
+  try {
+    if (elem.requestFullscreen) {
+      await elem.requestFullscreen();
+    } else if (elem.webkitRequestFullscreen) {
+      await elem.webkitRequestFullscreen();
+    } else if (elem.msRequestFullscreen) {
+      await elem.msRequestFullscreen();
+    }
+  } catch (err) {
+    console.error('Error entering fullscreen:', err);
+  }
+}
+
+function exitFullscreen() {
+  if (document.fullscreenElement) {
+    if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen().catch(() => {});
+    } else if (document.msExitFullscreen) {
+      document.msExitFullscreen().catch(() => {});
+    }
+  }
+}
+
+function setupProctorRestrictions() {
+  const handleFullscreenChange = () => {
+    if (role !== 'student') return;
+    if (!document.fullscreenElement) {
+      $('fullscreenBlocker').classList.remove('hidden');
+      sessionFlags.add('EXIT_FULLSCREEN');
+      triggerImmediateUpload();
+    } else {
+      $('fullscreenBlocker').classList.add('hidden');
+    }
+  };
+
+  document.addEventListener('fullscreenchange', handleFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+  document.addEventListener('msfullscreenchange', handleFullscreenChange);
+
+  document.addEventListener('visibilitychange', () => {
+    if (role !== 'student') return;
+    if (document.visibilityState === 'hidden') {
+      sessionFlags.add('TAB_SWITCH');
+      triggerImmediateUpload();
+    }
+  });
+
+  window.addEventListener('blur', () => {
+    if (role !== 'student') return;
+    sessionFlags.add('TAB_SWITCH');
+    triggerImmediateUpload();
+  });
+
+  $('btnReenterFullscreen').addEventListener('click', async () => {
+    await enterFullscreen();
+  });
+
+  // Intercept right-clicks (context menu)
+  document.addEventListener('contextmenu', (e) => {
+    if (role !== 'student') return;
+    e.preventDefault();
+    sessionFlags.add('SHORTCUT_ATTEMPT');
+    triggerImmediateUpload();
+  });
+
+  // Intercept Copy, Cut, Paste
+  document.addEventListener('copy', (e) => {
+    if (role !== 'student') return;
+    e.preventDefault();
+    sessionFlags.add('SHORTCUT_ATTEMPT');
+    triggerImmediateUpload();
+  });
+
+  document.addEventListener('cut', (e) => {
+    if (role !== 'student') return;
+    e.preventDefault();
+    sessionFlags.add('SHORTCUT_ATTEMPT');
+    triggerImmediateUpload();
+  });
+
+  document.addEventListener('paste', (e) => {
+    if (role !== 'student') return;
+    e.preventDefault();
+    sessionFlags.add('SHORTCUT_ATTEMPT');
+    triggerImmediateUpload();
+  });
+
+  // Intercept developer tools and system shortcuts
+  document.addEventListener('keydown', (e) => {
+    if (role !== 'student') return;
+    const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+    const key = e.key.toLowerCase();
+    
+    if (
+      (isCmdOrCtrl && (key === 'c' || key === 'v' || key === 'x' || key === 'u')) ||
+      (isCmdOrCtrl && e.shiftKey && key === 'i') ||
+      e.key === 'F12'
+    ) {
+      e.preventDefault();
+      sessionFlags.add('SHORTCUT_ATTEMPT');
+      triggerImmediateUpload();
+    }
+  });
+}
+
+function startAudioAnalysis() {
+  stopAudioAnalysis();
+  if (!camStream) return;
+  
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    
+    audioCtx = new AudioContextClass();
+    audioSource = audioCtx.createMediaStreamSource(camStream);
+    audioAnalyser = audioCtx.createAnalyser();
+    audioAnalyser.fftSize = 256;
+    audioSource.connect(audioAnalyser);
+    
+    const bufferLength = audioAnalyser.frequencyBinCount;
+    const dataArray = new Float32Array(bufferLength);
+    
+    let voiceFramesCount = 0;
+    
+    audioTimer = setInterval(() => {
+      if (role !== 'student' || !audioAnalyser) return;
+      audioAnalyser.getFloatTimeDomainData(dataArray);
+      
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        sum += dataArray[i] * dataArray[i];
+      }
+      const rms = Math.sqrt(sum / bufferLength);
+      
+      if (rms > AUDIO_THRESHOLD) {
+        voiceFramesCount++;
+      } else {
+        voiceFramesCount = Math.max(0, voiceFramesCount - 1);
+      }
+      
+      if (voiceFramesCount >= 5) {
+        sessionFlags.add('AUDIO_TALKING');
+        triggerImmediateUpload();
+        voiceFramesCount = 0;
+      }
+    }, 200);
+    
+  } catch (err) {
+    console.warn('[audio-analysis] could not start:', err);
+  }
+}
+
+function stopAudioAnalysis() {
+  if (audioTimer) {
+    clearInterval(audioTimer);
+    audioTimer = null;
+  }
+  if (audioSource) {
+    audioSource.disconnect();
+    audioSource = null;
+  }
+  if (audioCtx) {
+    audioCtx.close().catch(() => {});
+    audioCtx = null;
+  }
+  audioAnalyser = null;
+}
+
+// Initialize proctor restrictions listener
+setupProctorRestrictions();
 
 // A shared join link lands here with ?code=ABC123 already filled in.
 const codeFromUrl = new URLSearchParams(location.search).get('code');

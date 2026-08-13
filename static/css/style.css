@@ -438,3 +438,44 @@ input:focus { border-color: var(--blue); }
   .exam-stage, .host-body { grid-template-columns: 1fr; }
   .exam-side, .host-side { max-height: 260px; }
 }
+
+/* ---------- fullscreen blocker ---------- */
+.fullscreen-blocker {
+  position: fixed;
+  inset: 0;
+  background: var(--surface);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.blocker-content {
+  max-width: 480px;
+  background: var(--surface);
+  padding: 40px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 3px rgba(60,64,67,.2), 0 4px 12px rgba(60,64,67,.12);
+}
+
+.blocker-icon {
+  font-size: 64px;
+  display: block;
+  margin-bottom: 20px;
+}
+
+.blocker-content h2 {
+  margin: 0 0 12px;
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--red);
+}
+
+.blocker-content p {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 32px;
+}

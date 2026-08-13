@@ -9,6 +9,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from proctor.face_engine import face_engine
+
 _DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(_DIR, "models")
 YUNET_MODEL_PATH  = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx")
@@ -22,7 +24,7 @@ MAR_TALKING_THRESHOLD = 0.35  # Mouth Aspect Ratio threshold for talking
 
 MOVE_WINDOW_SECS     = 8.0
 MOVE_FREQ_THRESHOLD  = 6
-OBJ_CONFIDENCE_MIN   = 0.32  # Proctor-X conf threshold
+OBJ_CONFIDENCE_MIN   = 0.25  # Proctor-X conf threshold
 
 # Consecutive frame checks required before warning (prevents false alarms)
 REQUIRED_SUSTAINED_CHECKS = 3
@@ -47,6 +49,10 @@ CLIENT_FLAG_REASONS = {
     "NO_FACE":         "No face visible — candidate left the camera frame",
     "MULTIPLE_FACES":  "More than one person visible",
     "EYES_CLOSED":     "Eyes closed for a sustained period",
+    "TAB_SWITCH":      "Tab switched / browser minimized — left exam interface",
+    "EXIT_FULLSCREEN": "Exited fullscreen mode — potential screen share/app switch",
+    "SHORTCUT_ATTEMPT": "Keyboard shortcut / right-click block — possible copy-paste attempt",
+    "AUDIO_TALKING":   "Loud talking / background voice detected by microphone",
 }
 
 
@@ -65,6 +71,7 @@ class ParticipantState:
     consecutive_turn: int = 0
     consecutive_talking: int = 0
     last_warned: dict = field(default_factory=dict)
+    frame_count: int = 0
 
 
 class CheatingDetector:
@@ -172,7 +179,9 @@ class CheatingDetector:
             return s.is_kicked if s else False
 
     def analyze(self, enrollment: str, image_data: str,
-                client_flags: list = None, hand_boxes: list = None) -> dict:
+                client_flags: list = None, hand_boxes: list = None,
+                client_landmarks_active: bool = False,
+                face_encoding: list = None) -> dict:
         result = {"ok": False, "cheating": False, "kick": False, "warning_count": 0, "warning_issued": False, "reasons": [], "debug": {}}
         img = self._decode_image(image_data)
         if img is None:
@@ -225,7 +234,7 @@ class CheatingDetector:
             # None means no browser engine, so fall back. An empty list means the
             # engine ran and found nothing - which must not be confused with the
             # engine being absent, or these heuristics would override its verdict.
-            use_server_pose = client_flags is None
+            use_server_pose = not client_landmarks_active
             if use_server_pose and face_count >= 1 and self._yunet is not None:
                 yaw, pitch, gaze_off, is_talking = self._analyze_head_pose_and_mouth(faces[0], img.shape)
                 debug["yaw"]        = round(float(yaw), 3) if yaw is not None else None
@@ -302,6 +311,16 @@ class CheatingDetector:
                 if reason:
                     cheating_reasons.append(reason)
             debug["client_flags"] = list(client_flags or [])
+
+            # 6. Biometric Face Verification (candidate substitution/impersonation check)
+            # Run this every 5th frame (~15s) when exactly 1 face is present to keep CPU usage low
+            session.frame_count += 1
+            if face_encoding is not None and face_count == 1 and session.frame_count % 5 == 0:
+                matched, score, msg = face_engine.verify_face(img, face_encoding)
+                debug["face_verified"] = bool(matched)
+                debug["face_verification_score"] = float(score)
+                if not matched:
+                    cheating_reasons.append("Face verification failed — identity mismatch detected")
 
             now = time.time()
             deduped = self._deduplicate_reasons(cheating_reasons, session, now)
