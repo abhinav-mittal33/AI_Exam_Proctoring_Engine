@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Proctor — Online Examination</title>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<!-- ==================== LANDING ==================== -->
+<main id="screen-landing" class="screen">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">P</span> Proctor</div>
+  </header>
+
+  <div class="landing-wrap">
+    <div class="landing-copy">
+      <h1>Secure online exams<br>with live proctoring</h1>
+      <p>Identity is verified by face match before anyone enters. During the exam,
+         each candidate is monitored automatically for phones, notes, extra people
+         and off-screen glances.</p>
+
+      <div class="landing-actions">
+        <button id="btnStartExam" class="btn btn-primary btn-lg">
+          <span class="ico">🎓</span> Start an exam
+        </button>
+        <div class="join-inline">
+          <input id="joinCode" type="text" placeholder="Exam code" maxlength="6" autocomplete="off" />
+          <button id="btnJoinExam" class="btn btn-text">Join</button>
+        </div>
+      </div>
+      <p class="muted-line">Not registered yet? <a href="#" id="linkRegister">Register your face</a></p>
+      <p id="landingError" class="error-text"></p>
+    </div>
+
+    <div class="landing-art">
+      <div class="art-tile art-tile-main"><span>👤</span><em>Face verified</em></div>
+      <div class="art-tile art-tile-a">📵 Phone detected</div>
+      <div class="art-tile art-tile-b">👥 Second person</div>
+    </div>
+  </div>
+</main>
+
+<!-- ==================== REGISTER ==================== -->
+<main id="screen-register" class="screen hidden">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">P</span> Proctor</div>
+    <button class="btn btn-text" data-back>Back</button>
+  </header>
+
+  <div class="card-wrap">
+    <div class="card">
+      <h2>Register your face</h2>
+      <p class="card-sub">This photo becomes your reference for exam sign-in.</p>
+
+      <video id="registerCam" class="cam-preview" autoplay playsinline muted></video>
+
+      <label for="regName">Full name</label>
+      <input id="regName" type="text" placeholder="e.g. Priya Sharma" autocomplete="off" />
+
+      <label for="regEnrollment">Enrollment number</label>
+      <input id="regEnrollment" type="text" placeholder="e.g. 2503031461892" autocomplete="off" />
+
+      <label for="regPassword">Password</label>
+      <input id="regPassword" type="password" placeholder="Choose a password" autocomplete="new-password" />
+
+      <button id="btnRegister" class="btn btn-primary btn-block">Capture photo &amp; register</button>
+      <p id="registerMsg" class="status-text"></p>
+    </div>
+  </div>
+</main>
+
+<!-- ==================== STUDENT SIGN-IN ==================== -->
+<main id="screen-signin" class="screen hidden">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">P</span> Proctor</div>
+    <button class="btn btn-text" data-back>Back</button>
+  </header>
+
+  <div class="card-wrap">
+    <div class="card">
+      <h2>Join exam <span id="signinCode" class="code-chip">------</span></h2>
+      <p class="card-sub">Sign in, then hold still for the face check.</p>
+
+      <video id="signinCam" class="cam-preview" autoplay playsinline muted></video>
+
+      <label for="signinEnrollment">Enrollment number</label>
+      <input id="signinEnrollment" type="text" placeholder="Your enrollment number" autocomplete="off" />
+
+      <label for="signinPassword">Password</label>
+      <input id="signinPassword" type="password" placeholder="Your password" autocomplete="current-password" />
+
+      <button id="btnSignin" class="btn btn-primary btn-block">Verify face &amp; enter exam</button>
+      <p id="signinMsg" class="status-text"></p>
+    </div>
+  </div>
+</main>
+
+<!-- ==================== STUDENT EXAM ==================== -->
+<main id="screen-exam" class="screen hidden">
+  <header class="meet-topbar">
+    <div class="meet-title">
+      <span id="examTitle">Examination</span>
+      <span class="dot-sep">•</span>
+      <span id="examCodeLabel" class="mono">------</span>
+    </div>
+    <div class="meet-status">
+      <span id="proctorPill" class="pill pill-ok">Proctoring active</span>
+    </div>
+  </header>
+
+  <section class="exam-stage">
+    <div class="self-tile">
+      <video id="selfCam" autoplay playsinline muted></video>
+      <span class="tile-label" id="selfName">You</span>
+      <span id="selfWarnBadge" class="tile-badge hidden"></span>
+    </div>
+
+    <aside class="exam-side">
+      <h3>Exam in progress</h3>
+      <p class="side-note">Keep your face in frame and stay on this tab. Phones,
+         notes and other people in view are recorded as violations.</p>
+      <div class="rule-list">
+        <div class="rule"><span>👤</span> Stay alone in frame</div>
+        <div class="rule"><span>📵</span> No phones or books</div>
+        <div class="rule"><span>👀</span> Keep your eyes on the screen</div>
+      </div>
+      <div class="warn-counter">
+        Warnings <strong id="warnCount">0</strong> / 3
+      </div>
+    </aside>
+  </section>
+
+  <footer class="meet-controls">
+    <button id="btnMic" class="ctrl" title="Microphone"><span>🎤</span></button>
+    <button id="btnCam" class="ctrl" title="Camera"><span>📷</span></button>
+    <button id="btnLeaveExam" class="ctrl ctrl-danger">Leave exam</button>
+  </footer>
+
+  <div id="warningToast" class="warning-toast hidden"></div>
+</main>
+
+<!-- ==================== HOST DASHBOARD ==================== -->
+<main id="screen-host" class="screen hidden">
+  <header class="meet-topbar">
+    <div class="meet-title">
+      <span id="hostExamTitle">Examination</span>
+      <span class="dot-sep">•</span>
+      <span id="hostCodeLabel" class="mono">------</span>
+      <button id="btnCopyLink" class="btn btn-chip">Copy join link</button>
+    </div>
+    <div class="meet-status">
+      <span id="detectorPill" class="pill pill-ok">Detection ready</span>
+      <span class="pill pill-plain"><strong id="studentCount">0</strong> <span id="studentCountLabel">candidates</span></span>
+    </div>
+  </header>
+
+  <section class="host-body">
+    <div id="hostGrid" class="host-grid">
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon">🎓</div>
+        <h3>Waiting for candidates</h3>
+        <p>Share the join link. Candidates appear here once their face is verified.</p>
+        <code id="emptyLink" class="link-box">—</code>
+      </div>
+    </div>
+
+    <aside class="host-side">
+      <h3>Proctoring alerts</h3>
+      <div id="alertFeed" class="alert-feed">
+        <p class="feed-empty">No violations yet.</p>
+      </div>
+    </aside>
+  </section>
+
+  <footer class="meet-controls">
+    <button id="btnEndExam" class="ctrl ctrl-danger">End exam for all</button>
+  </footer>
+</main>
+
+<!-- ==================== LIVE VIEW MODAL ==================== -->
+<div id="liveModal" class="modal hidden">
+  <div class="modal-inner">
+    <header class="modal-head">
+      <h3 id="liveName">Live view</h3>
+      <button id="btnCloseLive" class="btn btn-text">Close</button>
+    </header>
+    <video id="liveVideo" autoplay playsinline></video>
+    <p id="liveStatus" class="status-text">Connecting…</p>
+  </div>
+</div>
+
+<!-- ==================== ENDED ==================== -->
+<main id="screen-ended" class="screen hidden">
+  <div class="card-wrap">
+    <div class="card card-center">
+      <div class="ended-icon">✓</div>
+      <h2>Exam ended</h2>
+      <p id="endedReason" class="card-sub">This exam session is over.</p>
+      <button class="btn btn-primary" data-back>Back to start</button>
+    </div>
+  </div>
+</main>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
