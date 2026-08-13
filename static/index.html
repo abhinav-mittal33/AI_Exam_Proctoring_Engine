@@ -3,42 +3,119 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
 <title>Proctor — Online Examination</title>
-<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
 
+<!-- Icon sprite. Line icons at a 24x24 grid, stroked with currentColor so they
+     inherit text colour and stay crisp at any size. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>
+    </symbol>
+    <symbol id="i-cap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"/>
+    </symbol>
+    <symbol id="i-user-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/>
+    </symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </symbol>
+    <symbol id="i-phone-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/><path d="m2 2 20 20"/>
+    </symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>
+    </symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/>
+    </symbol>
+    <symbol id="i-video" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="6" width="14" height="12" rx="2"/><path d="m22 8-6 4 6 4V8z"/>
+    </symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m5 13 4 4L19 7"/>
+    </symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+    </symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
+    </symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
+    </symbol>
+  </defs>
+</svg>
+
 <!-- ==================== LANDING ==================== -->
 <main id="screen-landing" class="screen">
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">P</span> Proctor</div>
+    <div class="brand">
+      <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></span>
+      Proctor
+    </div>
   </header>
 
   <div class="landing-wrap">
     <div class="landing-copy">
+      <span class="eyebrow">Automated invigilation</span>
       <h1>Secure online exams<br>with live proctoring</h1>
       <p>Identity is verified by face match before anyone enters. During the exam,
-         each candidate is monitored automatically for phones, notes, extra people
-         and off-screen glances.</p>
+         every candidate is monitored for phones, notes, extra people and
+         off-screen glances.</p>
 
       <div class="landing-actions">
         <button id="btnStartExam" class="btn btn-primary btn-lg">
-          <span class="ico">🎓</span> Start an exam
+          <svg class="icon" aria-hidden="true"><use href="#i-cap"/></svg>
+          Start an exam
         </button>
         <div class="join-inline">
+          <label class="sr-only" for="joinCode">Exam code</label>
           <input id="joinCode" type="text" placeholder="Exam code" maxlength="6" autocomplete="off" />
-          <button id="btnJoinExam" class="btn btn-text">Join</button>
+          <button id="btnJoinExam" class="btn btn-ghost">Join</button>
         </div>
       </div>
+
       <p class="muted-line">Not registered yet? <a href="#" id="linkRegister">Register your face</a></p>
-      <p id="landingError" class="error-text"></p>
+      <p id="landingError" class="error-text" role="alert"></p>
     </div>
 
-    <div class="landing-art">
-      <div class="art-tile art-tile-main"><span>👤</span><em>Face verified</em></div>
-      <div class="art-tile art-tile-a">📵 Phone detected</div>
-      <div class="art-tile art-tile-b">👥 Second person</div>
+    <!-- A miniature of the proctor's own view, so the product explains itself. -->
+    <div class="landing-art" aria-hidden="true">
+      <div class="art-frame">
+        <div class="art-head">
+          <span class="art-dot"></span> Live monitoring
+        </div>
+        <div class="art-grid">
+          <div class="art-cell ok">
+            <svg class="icon" aria-hidden="true"><use href="#i-user-check"/></svg>
+            <span>Verified</span>
+          </div>
+          <div class="art-cell"><span class="art-skeleton"></span></div>
+          <div class="art-cell alert">
+            <svg class="icon" aria-hidden="true"><use href="#i-phone-off"/></svg>
+            <span>Phone</span>
+          </div>
+          <div class="art-cell"><span class="art-skeleton"></span></div>
+        </div>
+      </div>
+      <div class="art-chip art-chip-a">
+        <svg class="icon" aria-hidden="true"><use href="#i-users"/></svg> Second person
+      </div>
+      <div class="art-chip art-chip-b">
+        <svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg> Gaze off screen
+      </div>
     </div>
   </div>
 </main>
@@ -46,8 +123,13 @@
 <!-- ==================== REGISTER ==================== -->
 <main id="screen-register" class="screen hidden">
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">P</span> Proctor</div>
-    <button class="btn btn-text" data-back>Back</button>
+    <div class="brand">
+      <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></span>
+      Proctor
+    </div>
+    <button class="btn btn-ghost btn-sm" data-back>
+      <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg> Back
+    </button>
   </header>
 
   <div class="card-wrap">
@@ -55,19 +137,26 @@
       <h2>Register your face</h2>
       <p class="card-sub">This photo becomes your reference for exam sign-in.</p>
 
-      <video id="registerCam" class="cam-preview" autoplay playsinline muted></video>
+      <div class="cam-shell">
+        <video id="registerCam" class="cam-preview" autoplay playsinline muted></video>
+        <span class="cam-hint">Look straight ahead, good light</span>
+      </div>
 
-      <label for="regName">Full name</label>
-      <input id="regName" type="text" placeholder="e.g. Priya Sharma" autocomplete="off" />
-
-      <label for="regEnrollment">Enrollment number</label>
-      <input id="regEnrollment" type="text" placeholder="e.g. 2503031461892" autocomplete="off" />
-
-      <label for="regPassword">Password</label>
-      <input id="regPassword" type="password" placeholder="Choose a password" autocomplete="new-password" />
+      <div class="field">
+        <label for="regName">Full name</label>
+        <input id="regName" type="text" placeholder="e.g. Priya Sharma" autocomplete="name" />
+      </div>
+      <div class="field">
+        <label for="regEnrollment">Enrollment number</label>
+        <input id="regEnrollment" type="text" placeholder="e.g. 2503031461892" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="regPassword">Password</label>
+        <input id="regPassword" type="password" placeholder="Choose a password" autocomplete="new-password" />
+      </div>
 
       <button id="btnRegister" class="btn btn-primary btn-block">Capture photo &amp; register</button>
-      <p id="registerMsg" class="status-text"></p>
+      <p id="registerMsg" class="status-text" role="status"></p>
     </div>
   </div>
 </main>
@@ -75,25 +164,39 @@
 <!-- ==================== STUDENT SIGN-IN ==================== -->
 <main id="screen-signin" class="screen hidden">
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">P</span> Proctor</div>
-    <button class="btn btn-text" data-back>Back</button>
+    <div class="brand">
+      <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></span>
+      Proctor
+    </div>
+    <button class="btn btn-ghost btn-sm" data-back>
+      <svg class="icon" aria-hidden="true"><use href="#i-arrow-left"/></svg> Back
+    </button>
   </header>
 
   <div class="card-wrap">
     <div class="card">
-      <h2>Join exam <span id="signinCode" class="code-chip">------</span></h2>
-      <p class="card-sub">Sign in, then hold still for the face check.</p>
+      <h2>Join exam</h2>
+      <p class="card-sub">
+        Signing in to <span id="signinCode" class="code-chip">------</span> — sign in,
+        then hold still for the face check.
+      </p>
 
-      <video id="signinCam" class="cam-preview" autoplay playsinline muted></video>
+      <div class="cam-shell">
+        <video id="signinCam" class="cam-preview" autoplay playsinline muted></video>
+        <span class="cam-hint">Centre your face in frame</span>
+      </div>
 
-      <label for="signinEnrollment">Enrollment number</label>
-      <input id="signinEnrollment" type="text" placeholder="Your enrollment number" autocomplete="off" />
-
-      <label for="signinPassword">Password</label>
-      <input id="signinPassword" type="password" placeholder="Your password" autocomplete="current-password" />
+      <div class="field">
+        <label for="signinEnrollment">Enrollment number</label>
+        <input id="signinEnrollment" type="text" placeholder="Your enrollment number" autocomplete="username" />
+      </div>
+      <div class="field">
+        <label for="signinPassword">Password</label>
+        <input id="signinPassword" type="password" placeholder="Your password" autocomplete="current-password" />
+      </div>
 
       <button id="btnSignin" class="btn btn-primary btn-block">Verify face &amp; enter exam</button>
-      <p id="signinMsg" class="status-text"></p>
+      <p id="signinMsg" class="status-text" role="status"></p>
     </div>
   </div>
 </main>
@@ -102,8 +205,9 @@
 <main id="screen-exam" class="screen hidden">
   <header class="meet-topbar">
     <div class="meet-title">
+      <span class="brand-mark sm"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></span>
       <span id="examTitle">Examination</span>
-      <span class="dot-sep">•</span>
+      <span class="dot-sep"></span>
       <span id="examCodeLabel" class="mono">------</span>
     </div>
     <div class="meet-status">
@@ -122,32 +226,53 @@
       <h3>Exam in progress</h3>
       <p class="side-note">Keep your face in frame and stay on this tab. Phones,
          notes and other people in view are recorded as violations.</p>
+
       <div class="rule-list">
-        <div class="rule"><span>👤</span> Stay alone in frame</div>
-        <div class="rule"><span>📵</span> No phones or books</div>
-        <div class="rule"><span>👀</span> Keep your eyes on the screen</div>
+        <div class="rule">
+          <svg class="icon" aria-hidden="true"><use href="#i-user-check"/></svg>
+          Stay alone in frame
+        </div>
+        <div class="rule">
+          <svg class="icon" aria-hidden="true"><use href="#i-phone-off"/></svg>
+          No phones or books
+        </div>
+        <div class="rule">
+          <svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg>
+          Keep your eyes on the screen
+        </div>
       </div>
+
       <div class="warn-counter">
-        Warnings <strong id="warnCount">0</strong> / 3
+        <strong id="warnCount">0</strong>
+        <span>of 3 warnings</span>
+        <div class="warn-track"><i></i><i></i><i></i></div>
       </div>
     </aside>
   </section>
 
   <footer class="meet-controls">
-    <button id="btnMic" class="ctrl" title="Microphone"><span>🎤</span></button>
-    <button id="btnCam" class="ctrl" title="Camera"><span>📷</span></button>
+    <button id="btnMic" class="ctrl" title="Microphone" aria-label="Toggle microphone">
+      <svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>
+    </button>
+    <button id="btnCam" class="ctrl" title="Camera" aria-label="Toggle camera">
+      <svg class="icon" aria-hidden="true"><use href="#i-video"/></svg>
+    </button>
     <button id="btnLeaveExam" class="ctrl ctrl-danger">Leave exam</button>
   </footer>
 
-  <div id="warningToast" class="warning-toast hidden"></div>
+  <div id="warningToast" class="warning-toast hidden" role="alert"></div>
 
   <!-- Fullscreen Enforcer Overlay -->
   <div id="fullscreenBlocker" class="fullscreen-blocker hidden">
     <div class="blocker-content">
-      <span class="blocker-icon">🖥️</span>
-      <h2>Fullscreen Required</h2>
-      <p>This exam requires you to remain in fullscreen mode. Any attempt to exit fullscreen, switch tabs, or change applications is recorded as a violation.</p>
-      <button id="btnReenterFullscreen" class="btn btn-primary">Enter Fullscreen</button>
+      <span class="blocker-icon"><svg class="icon" aria-hidden="true"><use href="#i-monitor"/></svg></span>
+      <h2>Fullscreen required</h2>
+      <p>This exam must stay in fullscreen. Exiting fullscreen, switching tabs or
+         changing applications is recorded as a violation.</p>
+      <button id="btnReenterFullscreen" class="btn btn-primary">
+        <svg class="icon" aria-hidden="true"><use href="#i-expand"/></svg>
+        Enter fullscreen
+      </button>
     </div>
   </div>
 </main>
@@ -156,21 +281,24 @@
 <main id="screen-host" class="screen hidden">
   <header class="meet-topbar">
     <div class="meet-title">
+      <span class="brand-mark sm"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></span>
       <span id="hostExamTitle">Examination</span>
-      <span class="dot-sep">•</span>
+      <span class="dot-sep"></span>
       <span id="hostCodeLabel" class="mono">------</span>
       <button id="btnCopyLink" class="btn btn-chip">Copy join link</button>
     </div>
     <div class="meet-status">
       <span id="detectorPill" class="pill pill-ok">Detection ready</span>
-      <span class="pill pill-plain"><strong id="studentCount">0</strong> <span id="studentCountLabel">candidates</span></span>
+      <span class="pill pill-plain">
+        <strong id="studentCount">0</strong>&nbsp;<span id="studentCountLabel">candidates</span>
+      </span>
     </div>
   </header>
 
   <section class="host-body">
     <div id="hostGrid" class="host-grid">
       <div id="emptyState" class="empty-state">
-        <div class="empty-icon">🎓</div>
+        <div class="empty-icon"><svg class="icon" aria-hidden="true"><use href="#i-cap"/></svg></div>
         <h3>Waiting for candidates</h3>
         <p>Share the join link. Candidates appear here once their face is verified.</p>
         <code id="emptyLink" class="link-box">—</code>
@@ -178,7 +306,10 @@
     </div>
 
     <aside class="host-side">
-      <h3>Proctoring alerts</h3>
+      <h3>
+        <svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg>
+        Proctoring alerts
+      </h3>
       <div id="alertFeed" class="alert-feed">
         <p class="feed-empty">No violations yet.</p>
       </div>
@@ -191,14 +322,14 @@
 </main>
 
 <!-- ==================== LIVE VIEW MODAL ==================== -->
-<div id="liveModal" class="modal hidden">
+<div id="liveModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="liveName">
   <div class="modal-inner">
     <header class="modal-head">
       <h3 id="liveName">Live view</h3>
-      <button id="btnCloseLive" class="btn btn-text">Close</button>
+      <button id="btnCloseLive" class="btn btn-ghost btn-sm">Close</button>
     </header>
     <video id="liveVideo" autoplay playsinline></video>
-    <p id="liveStatus" class="status-text">Connecting…</p>
+    <p id="liveStatus" class="status-text" role="status">Connecting…</p>
   </div>
 </div>
 
@@ -206,7 +337,7 @@
 <main id="screen-ended" class="screen hidden">
   <div class="card-wrap">
     <div class="card card-center">
-      <div class="ended-icon">✓</div>
+      <div class="ended-icon"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg></div>
       <h2>Exam ended</h2>
       <p id="endedReason" class="card-sub">This exam session is over.</p>
       <button class="btn btn-primary" data-back>Back to start</button>

@@ -307,6 +307,9 @@ function stopFrameUploads() {
 
 socket.on('proctor-status', ({ warning_count }) => {
   $('warnCount').textContent = warning_count;
+  $('warnCount').closest('.warn-counter').dataset.warnings = warning_count;
+  // Drives the three-segment progress track next to the counter.
+  $('warnCount').closest('.warn-counter').dataset.warnings = warning_count;
 });
 
 socket.on('proctor-warning', ({ warning_count, reasons, removed }) => {
