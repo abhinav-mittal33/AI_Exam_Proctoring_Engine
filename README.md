@@ -43,7 +43,7 @@ Detection is the proctor-x engine, split across the browser and the server.
 | Signal | How |
 |---|---|
 | Head turned / looking down | True 3D pose from the transformation matrix, EMA-smoothed |
-| Eyes off screen | Iris position within each eye |
+| Eye gaze, with direction | Iris position within each eye, measured from the candidate's resting gaze; reported as looking left / right / up / down |
 | Talking | Mouth aspect ratio plus its variance over a short window |
 | Eyes closed | Eye aspect ratio |
 | Hands | Hand boxes, so the server can tell a held phone from one on a shelf |
@@ -76,7 +76,7 @@ the main source of false positives.
 | Head turned | 22° off resting yaw | 12 frames (~0.8s) |
 | Looking down | 18° off resting pitch | 14 frames (~0.9s) |
 | Head tilted sideways | 20° off resting roll | 14 frames (~0.9s) |
-| Eyes off screen | 0.16 iris offset | 14 frames |
+| Eyes off screen (with direction) | 0.16 iris offset from resting gaze | 14 frames |
 | Talking | 3 mouth open/close cycles in 2.5s | 4 frames |
 | Second person | any extra face | 3 frames (~0.2s) |
 | Eyes closed | 62% of resting opening | 18 frames |

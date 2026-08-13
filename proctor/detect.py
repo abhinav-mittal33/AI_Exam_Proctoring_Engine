@@ -51,6 +51,10 @@ CLIENT_FLAG_REASONS = {
     "EYES_CLOSED":     "Eyes closed for a sustained period",
     "HEAD_TILT":       "Head tilted to one side — possible off-screen reference",
     "GAZE_OFF_SCREEN": "Eyes directed away from the screen",
+    "GAZE_LEFT":       "Eyes looking left, away from the screen",
+    "GAZE_RIGHT":      "Eyes looking right, away from the screen",
+    "GAZE_DOWN":       "Eyes looking down — possible notes or a phone in the lap",
+    "GAZE_UP":         "Eyes looking up, away from the screen",
     "TAB_SWITCH":      "Tab switched / browser minimized — left exam interface",
     "EXIT_FULLSCREEN": "Exited fullscreen mode — potential screen share/app switch",
     "SHORTCUT_ATTEMPT": "Keyboard shortcut / right-click block — possible copy-paste attempt",
@@ -82,6 +86,12 @@ REASON_SEVERITY = {
     CLIENT_FLAG_REASONS["LOOKING_DOWN"]:     "MEDIUM",
     CLIENT_FLAG_REASONS["HEAD_TILT"]:        "MEDIUM",
     CLIENT_FLAG_REASONS["GAZE_OFF_SCREEN"]:  "MEDIUM",
+    CLIENT_FLAG_REASONS["GAZE_LEFT"]:        "MEDIUM",
+    CLIENT_FLAG_REASONS["GAZE_RIGHT"]:       "MEDIUM",
+    CLIENT_FLAG_REASONS["GAZE_UP"]:          "MEDIUM",
+    # Looking down is where notes and a phone in the lap live, so it is the one
+    # gaze direction worth treating as more than a wandering eye.
+    CLIENT_FLAG_REASONS["GAZE_DOWN"]:        "HIGH",
     CLIENT_FLAG_REASONS["EYES_CLOSED"]:      "LOW",
 }
 

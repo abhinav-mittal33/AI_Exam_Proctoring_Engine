@@ -146,6 +146,7 @@ export class ProctorXEngine {
       yawEma: 0, pitchEma: 0, rollEma: 0,
       marSamples: [],     // {t, mar} over the speech window
       mouthOpen: false,   // for counting open/close cycles
+      gazeDirection: null, // LEFT / RIGHT / UP / DOWN when eyes leave the screen
       cycles: [],         // timestamps of mouth openings
     };
 
@@ -269,13 +270,20 @@ export class ProctorXEngine {
 
       // --- calibration: learn this candidate's resting posture first ---
       if (!this.calibration.done) {
-        this.calibration.samples.push({ yaw, pitch, roll, mar, ear });
+        this.calibration.samples.push({
+          yaw, pitch, roll, mar, ear,
+          gazeYaw: gaze.gazeYaw, gazePitch: gaze.gazePitch,
+        });
         if (this.calibration.samples.length >= CALIBRATION_FRAMES) {
           const s = this.calibration.samples;
           const pick = (key) => ProctorXEngine.median(s.map((x) => x[key]));
           this.calibration.neutral = {
             yaw: pick('yaw'), pitch: pick('pitch'), roll: pick('roll'),
             mar: pick('mar'), ear: pick('ear'),
+            // Resting iris position. A webcam above or beside the screen means a
+            // candidate looking straight at their work already has a non-zero
+            // offset, so gaze must be measured from their own centre too.
+            gazeYaw: pick('gazeYaw'), gazePitch: pick('gazePitch'),
           };
           this.calibration.done = true;
           console.log('[proctor-x] calibrated resting posture:', this.calibration.neutral);
@@ -298,18 +306,40 @@ export class ProctorXEngine {
       const pitchDev = Math.abs(pitch - n.pitch);
       const rollDev = Math.abs(roll - n.roll);
 
+      // Iris offset measured from this candidate's own resting gaze, so an
+      // off-centre webcam does not read as permanently looking away.
+      const gazeYawDev = gaze.gazeYaw - n.gazeYaw;
+      const gazePitchDev = gaze.gazePitch - n.gazePitch;
+
       metrics.yawDev = +yawDev.toFixed(1);
       metrics.pitchDev = +pitchDev.toFixed(1);
       metrics.rollDev = +rollDev.toFixed(1);
-      metrics.gazeYaw = +gaze.gazeYaw.toFixed(3);
+      metrics.gazeYawDev = +gazeYawDev.toFixed(3);
+      metrics.gazePitchDev = +gazePitchDev.toFixed(3);
       metrics.ear = +ear.toFixed(3);
       metrics.mar = +mar.toFixed(3);
 
       lookingAway = yawDev > YAW_LIMIT;
       lookingDown = pitchDev > PITCH_LIMIT;
       headTilt = rollDev > ROLL_LIMIT;
-      gazeOff = Math.abs(gaze.gazeYaw) > GAZE_LIMIT || Math.abs(gaze.gazePitch) > GAZE_LIMIT;
       eyesClosed = ear < n.ear * EAR_CLOSED_RATIO;
+
+      // Eyes can leave the screen while the head stays perfectly still, which is
+      // exactly how someone reads from a second screen or a note beside them, so
+      // gaze is tracked as its own signal rather than as a corollary of pose.
+      // Ignored while the eyes are shut, since iris position is meaningless then.
+      if (!eyesClosed) {
+        if (Math.abs(gazeYawDev) > GAZE_LIMIT) {
+          gazeOff = true;
+          // The preview is mirrored for the candidate, but landmark x grows to
+          // the image right, which is the candidate's own left.
+          this.state.gazeDirection = gazeYawDev > 0 ? 'LEFT' : 'RIGHT';
+        } else if (Math.abs(gazePitchDev) > GAZE_LIMIT) {
+          gazeOff = true;
+          this.state.gazeDirection = gazePitchDev > 0 ? 'DOWN' : 'UP';
+        }
+      }
+      metrics.gazeDirection = gazeOff ? this.state.gazeDirection : null;
 
       // --- speech: count open/close cycles rather than raw openness ---
       // A mouth held open, or one yawn, is a single cycle. Talking is several.
@@ -339,10 +369,16 @@ export class ProctorXEngine {
     if (b.talking.isTriggered) flags.push('TALKING');
     if (b.eyesClosed.isTriggered) flags.push('EYES_CLOSED');
     if (b.headTilt.isTriggered) flags.push('HEAD_TILT');
-    // Reported only on its own: while the head is turned or tilted the iris
-    // estimate is unreliable, and pairing them would double-report one act.
-    if (b.gazeOff.isTriggered && !lookingAway && !lookingDown && !headTilt) {
-      flags.push('GAZE_OFF_SCREEN');
+
+    // Gaze is reported on its own axis. Suppressed only when the head is already
+    // turned the same way - that is one act, and head-turn already covers it -
+    // but eyes drifting sideways while the head stays still is its own finding.
+    if (b.gazeOff.isTriggered) {
+      const dir = this.state.gazeDirection;
+      const sameAxisAsHead =
+        ((dir === 'LEFT' || dir === 'RIGHT') && lookingAway) ||
+        ((dir === 'UP' || dir === 'DOWN') && lookingDown);
+      if (!sameAxisAsHead) flags.push('GAZE_' + dir);
     }
 
     // Hand boxes, padded 10%, so the server can tell whether a detected object is
