@@ -24,6 +24,7 @@ let frameTimer = null;
 let livePeer = null;         // host side: connection to the student being viewed
 let studentPeer = null;      // student side: connection to the host
 let liveStudentId = null;
+let proctorX = null;        // browser-side landmark engine (proctor-x port)
 let iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const tiles = {};            // student_id -> tile element
 
@@ -202,11 +203,27 @@ $('btnSignin').addEventListener('click', () => {
     show('exam');
 
     await startCamera($('selfCam'));
+    await startProctorX();
     startFrameUploads(res.frame_interval || 3);
   });
 });
 
 // ---------- student: frame uploads ----------
+
+async function startProctorX() {
+  try {
+    const { ProctorXEngine } = await import('/static/js/proctorx.js');
+    proctorX = new ProctorXEngine();
+    await proctorX.init();
+    proctorX.start($('selfCam'), 15);
+    console.log('[proctor-x] landmark engine running');
+  } catch (err) {
+    // The server still runs object and face-count detection on the uploaded
+    // frames, so proctoring degrades rather than stops.
+    console.warn('[proctor-x] could not start; server-side detection continues:', err);
+    proctorX = null;
+  }
+}
 
 function startFrameUploads(intervalSecs) {
   stopFrameUploads();
@@ -214,7 +231,16 @@ function startFrameUploads(intervalSecs) {
     const image = snapshot($('selfCam'), 0.7);
     // No frame means the camera is off or not ready. The server notices the gap
     // and tells the proctor, rather than detection silently doing nothing.
-    if (image) socket.emit('student-frame', { image_data: image });
+    if (!image) return;
+
+    const payload = { image_data: image };
+    if (proctorX) {
+      const { flags, hands, metrics } = proctorX.snapshot();
+      payload.flags = flags;    // debounced verdicts from the landmark engine
+      payload.hands = hands;    // so the server can tell "held" from "in the room"
+      payload.metrics = metrics;
+    }
+    socket.emit('student-frame', payload);
   };
   send();
   frameTimer = setInterval(send, intervalSecs * 1000);
@@ -223,6 +249,7 @@ function startFrameUploads(intervalSecs) {
 function stopFrameUploads() {
   if (frameTimer) clearInterval(frameTimer);
   frameTimer = null;
+  if (proctorX) { proctorX.stop(); proctorX = null; }
 }
 
 socket.on('proctor-status', ({ warning_count }) => {

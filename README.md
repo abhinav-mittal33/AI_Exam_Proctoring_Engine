@@ -35,19 +35,38 @@ Open http://localhost:5050.
 
 ## What counts as cheating
 
-Detection runs server-side on `onnxruntime` (deliberately not `ultralytics`, which
-pulls in torch and does not fit a 512MB instance):
+Detection is the proctor-x engine, split across the browser and the server.
 
-| Signal | Source |
+**In the candidate's browser** (`static/js/proctorx.js`) — MediaPipe FaceLandmarker
+(478 landmarks, iris, and a 3D facial transformation matrix) plus HandLandmarker:
+
+| Signal | How |
 |---|---|
-| Phone, book, laptop in frame | YOLOv8n via onnxruntime |
-| No face / multiple faces | YuNet face detector |
-| Head turned or tilted down | Facial landmark geometry |
-| Talking | Mouth aspect ratio over time |
+| Head turned / looking down | True 3D pose from the transformation matrix, EMA-smoothed |
+| Eyes off screen | Iris position within each eye |
+| Talking | Mouth aspect ratio plus its variance over a short window |
+| Eyes closed | Eye aspect ratio |
+| Hands | Hand boxes, so the server can tell a held phone from one on a shelf |
 
-Repeat detections of the same kind are suppressed for 12s, and pose signals need
-several consecutive frames before they count, so one glance away is not a warning.
-Three warnings removes a candidate from the exam automatically.
+This runs client-side deliberately: landmark extraction is the expensive part, and
+keeping it off the server is what lets one small instance host many candidates.
+
+**On the server** (`proctor/detect.py`) — the checks that must not be forgeable,
+since anything computed in a candidate's own browser can be tampered with:
+
+| Signal | How |
+|---|---|
+| Phone, book, laptop | YOLOv8n via onnxruntime, marked "held" when it overlaps a hand |
+| Face count (absent / multiple) | YuNet |
+
+Browser verdicts arrive already debounced by hysteresis buffers: a signal must hold
+for several consecutive frames to count, and decays faster than it builds, so one
+glance away is not a warning. Repeat detections of the same kind are then suppressed
+server-side for 12s. Three warnings removes a candidate automatically.
+
+If the browser engine fails to load, the server falls back to estimating pose from
+YuNet's five points. That fallback is noticeably noisier — it is a safety net, not
+the intended path.
 
 ## Layout
 
@@ -59,6 +78,7 @@ proctor/
   db_manager.py        SQLite: credentials and face encodings
 models/                ONNX weights (YuNet, SFace, YOLOv8n)
 static/                Frontend (single page, vanilla JS)
+  js/proctorx.js       Proctor-X engine: MediaPipe landmarks, gaze, hysteresis
 data/                  SQLite databases - gitignored, never commit
 registered_faces/      Reference photos - gitignored, never commit
 ```

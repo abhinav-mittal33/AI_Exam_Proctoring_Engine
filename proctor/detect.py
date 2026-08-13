@@ -37,6 +37,18 @@ CHEATING_OBJECT_MAP = {
 TARGET_OBJECT_CLASSES = {63: "laptop", 67: "cell phone", 73: "book"}
 YOLO_INPUT_SIZE = 640
 
+# Verdicts from the proctor-x landmark engine running in the candidate's browser.
+# Already debounced there by its hysteresis buffers, so they arrive as decisions
+# rather than raw measurements.
+CLIENT_FLAG_REASONS = {
+    "LOOKING_AWAY":    "Head turned away from the screen",
+    "LOOKING_DOWN":    "Looking down — possible reference material",
+    "TALKING":         "Sustained mouth movement — possible verbal communication",
+    "NO_FACE":         "No face visible — candidate left the camera frame",
+    "MULTIPLE_FACES":  "More than one person visible",
+    "EYES_CLOSED":     "Eyes closed for a sustained period",
+}
+
 
 @dataclass
 class ParticipantState:
@@ -159,7 +171,8 @@ class CheatingDetector:
             s = self._sessions.get(enrollment)
             return s.is_kicked if s else False
 
-    def analyze(self, enrollment: str, image_data: str) -> dict:
+    def analyze(self, enrollment: str, image_data: str,
+                client_flags: list = None, hand_boxes: list = None) -> dict:
         result = {"ok": False, "cheating": False, "kick": False, "warning_count": 0, "warning_issued": False, "reasons": [], "debug": {}}
         img = self._decode_image(image_data)
         if img is None:
@@ -201,8 +214,19 @@ class CheatingDetector:
             else:
                 session.consecutive_multi_face = 0
 
-            # 3. Head Pose, Gaze & Talking Analysis
-            if face_count >= 1 and self._yunet is not None:
+            # 3. Head pose, gaze and talking - fallback only.
+            #
+            # YuNet gives five points (eyes, nose, mouth corners), so pose here is
+            # a rough estimate and "gaze" is really eye-centre offset. That is what
+            # produced the tilt and talking false alarms. When the proctor-x
+            # landmark engine is running in the browser it supplies 478 points with
+            # true iris tracking and a 3D transformation matrix, so its verdicts
+            # replace these rather than being stacked on top of them.
+            # None means no browser engine, so fall back. An empty list means the
+            # engine ran and found nothing - which must not be confused with the
+            # engine being absent, or these heuristics would override its verdict.
+            use_server_pose = client_flags is None
+            if use_server_pose and face_count >= 1 and self._yunet is not None:
                 yaw, pitch, gaze_off, is_talking = self._analyze_head_pose_and_mouth(faces[0], img.shape)
                 debug["yaw"]        = round(float(yaw), 3) if yaw is not None else None
                 debug["pitch"]      = round(float(pitch), 3) if pitch is not None else None
@@ -259,14 +283,25 @@ class CheatingDetector:
                     else:
                         session.consecutive_talking = 0
 
-            # 4. Proctor-X YOLO11 Detection Engine (Cell Phone, Book, Laptop, Handheld objects)
+            # 4. Objects (phone / book / laptop), and whether they are being held
             if self._yolo is not None:
-                detected_objs = self._detect_objects_proctorx(img)
+                detected_objs = self._detect_objects_proctorx(img, hand_boxes or [])
                 debug["detected_objects"] = [o[0] for o in detected_objs]
                 for _, obj_reason in detected_objs:
                     cheating_reasons.append(obj_reason)
             else:
                 debug["detected_objects"] = []
+
+            # 5. Verdicts from the proctor-x landmark engine in the candidate's
+            # browser: iris gaze, 3D head pose and mouth movement, none of which
+            # are recoverable from YuNet's five points. Already debounced there.
+            # Treated as additional evidence only - face count and objects above
+            # are decided server-side, since a browser can be tampered with.
+            for flag in (client_flags or []):
+                reason = CLIENT_FLAG_REASONS.get(flag)
+                if reason:
+                    cheating_reasons.append(reason)
+            debug["client_flags"] = list(client_flags or [])
 
             now = time.time()
             deduped = self._deduplicate_reasons(cheating_reasons, session, now)
@@ -356,10 +391,13 @@ class CheatingDetector:
             print(f"[CheatingDetector] Pose error: {e}")
             return None, None, False, False
 
-    def _detect_objects_proctorx(self, img: np.ndarray) -> list:
+    def _detect_objects_proctorx(self, img: np.ndarray, hand_boxes: list = None) -> list:
         """
-        Proctor-X object detection logic:
-        Detects cell phone, book, laptop, and prohibited handheld items.
+        Finds phones, books and laptops, and says whether one is being held.
+
+        hand_boxes are normalised rectangles from the browser's hand tracker. An
+        object overlapping a hand is much stronger evidence than one sitting
+        somewhere in the room, so the two cases are reported differently.
         """
         results = []
         try:
@@ -369,18 +407,46 @@ class CheatingDetector:
 
             out = self._yolo.run(None, {self._yolo_input: blob})[0]
 
-            # YOLOv8 head: (1, 84, 8400) -> 4 box coords followed by 80 class scores.
-            # Only presence matters here, not boxes, so the per-class max over all
-            # anchors is enough and no NMS is needed.
-            scores = np.squeeze(out, 0)[4:, :]
+            # YOLOv8 head: (1, 84, 8400) -> 4 box coords (cx, cy, w, h in input
+            # pixels) followed by 80 class scores.
+            preds = np.squeeze(out, 0)
+            boxes = preds[:4, :]
+            scores = preds[4:, :]
 
             for cls_id, name in TARGET_OBJECT_CLASSES.items():
-                if float(scores[cls_id].max()) >= OBJ_CONFIDENCE_MIN:
+                class_scores = scores[cls_id]
+                best = int(np.argmax(class_scores))
+                if float(class_scores[best]) < OBJ_CONFIDENCE_MIN:
+                    continue
+
+                # Straight resize (no letterbox), so normalising by the input size
+                # maps back onto the original frame proportionally.
+                cx, cy, w, h = (float(v) / YOLO_INPUT_SIZE for v in boxes[:, best])
+                box = (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+
+                if self._overlaps_hand(box, hand_boxes or []):
+                    results.append((name, f"{name.title()} held in hand — prohibited item in use"))
+                else:
                     results.append((name, CHEATING_OBJECT_MAP[name]))
 
         except Exception as e:
             print(f"[CheatingDetector] Object detect error: {e}")
         return results
+
+    @staticmethod
+    def _overlaps_hand(box, hand_boxes) -> bool:
+        x1, y1, x2, y2 = box
+        for hand in hand_boxes:
+            try:
+                ix1 = max(x1, float(hand["minX"]))
+                iy1 = max(y1, float(hand["minY"]))
+                ix2 = min(x2, float(hand["maxX"]))
+                iy2 = min(y2, float(hand["maxY"]))
+                if ix1 < ix2 and iy1 < iy2:
+                    return True
+            except (KeyError, TypeError, ValueError):
+                continue
+        return False
 
     def _deduplicate_reasons(self, reasons: list, session: ParticipantState, now: float, cooldown_secs: float = 12.0) -> list:
         deduped = []

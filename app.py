@@ -216,6 +216,8 @@ def on_student_join(data):
         "warnings": 0,
         "last_frame_at": None,
         "last_frame": None,
+        "last_flags": None,
+        "last_hands": [],
     }
     sio_join_room(code)
     cheating_detector.register_session(enrollment)
@@ -250,6 +252,11 @@ def on_student_frame(data):
     student = exam["students"][sid()]
     student["last_frame_at"] = time.time()
     student["last_frame"] = image
+    # Verdicts and hand boxes from the proctor-x engine in the candidate's browser.
+    # Kept as None when the browser engine is not running, so the detector knows
+    # to fall back rather than reading "no flags" as "nothing is wrong".
+    student["last_flags"] = (data or {}).get("flags")
+    student["last_hands"] = (data or {}).get("hands") or []
 
     # The host's monitoring grid is just these frames - no WebRTC needed.
     socketio.emit("student-frame", {
@@ -274,7 +281,12 @@ def analyse_frame(student_sid, job):
     if not student or not student["last_frame"]:
         return
 
-    result = cheating_detector.analyze(job["enrollment"], student["last_frame"])
+    result = cheating_detector.analyze(
+        job["enrollment"],
+        student["last_frame"],
+        client_flags=student.get("last_flags"),
+        hand_boxes=student.get("last_hands"),
+    )
     if not result.get("ok"):
         return
 
