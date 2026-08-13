@@ -24,7 +24,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open http://localhost:5000.
+Open http://localhost:5050.
 
 1. **Register a face** — "Register your face" on the landing page. Name, enrollment
    number, password, and a webcam photo. This is the reference for sign-in.
@@ -66,7 +66,7 @@ data/                  SQLite databases - gitignored, never commit
 
 | Variable | Purpose |
 |---|---|
-| `PORT` | HTTP port (default 5000) |
+| `PORT` | HTTP port (default 5050) |
 | `SECRET_KEY` | Flask session secret |
 | `TURN_URL` / `TURN_USER` / `TURN_PASS` | TURN relay for the live view only |
 

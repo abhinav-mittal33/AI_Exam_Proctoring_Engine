@@ -439,6 +439,7 @@ socketio.start_background_task(detection_worker)
 socketio.start_background_task(stall_watchdog)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    # Not 5000: macOS AirPlay Receiver squats on it and answers with a 403.
+    port = int(os.environ.get("PORT", 5050))
     print(f"Proctored exam app running on http://0.0.0.0:{port}")
     socketio.run(app, host="0.0.0.0", port=port, allow_unsafe_werkzeug=True)
