@@ -28,6 +28,11 @@ let proctorX = null;        // browser-side landmark engine (proctor-x port)
 let iceConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 const tiles = {};            // student_id -> tile element
 const sessionFlags = new Set();
+// Findings about the machine itself - virtual cameras, extra displays - rather
+// than about the candidate. Re-probed periodically, since a virtual camera can
+// be switched on mid-exam.
+let envFlags = new Set();
+let envTimer = null;
 let audioCtx = null;
 let audioSource = null;
 let audioAnalyser = null;
@@ -214,9 +219,36 @@ $('btnSignin').addEventListener('click', () => {
     await startCamera($('selfCam'));
     startProctorX(); // Start client-side proctoring engine asynchronously
     startAudioAnalysis(); // Start local audio analysis
+    startEnvironmentProbe();
     startFrameUploads(res.frame_interval || 3);
   });
 });
+
+// ---------- environment probes ----------
+
+async function startEnvironmentProbe() {
+  const run = async () => {
+    try {
+      const { probeEnvironment } = await import('/static/js/environment.js');
+      const track = camStream && camStream.getVideoTracks()[0];
+      const { flags, detail } = await probeEnvironment(track ? track.label : '');
+      envFlags = new Set(flags);
+      if (flags.length) console.warn('[proctor] environment:', flags, detail);
+    } catch (err) {
+      console.warn('[proctor] environment probe failed:', err);
+    }
+  };
+  run();
+  // Re-probed rather than checked once: a candidate can start a virtual camera
+  // or plug in a monitor after the exam has begun.
+  envTimer = setInterval(run, 15000);
+}
+
+function stopEnvironmentProbe() {
+  if (envTimer) clearInterval(envTimer);
+  envTimer = null;
+  envFlags = new Set();
+}
 
 // ---------- student: frame uploads ----------
 
@@ -264,6 +296,7 @@ function startFrameUploads(intervalSecs) {
       payload.hands = hands;    // so the server can tell "held" from "in the room"
       payload.metrics = metrics;
     }
+    currentFlags = currentFlags.concat(Array.from(envFlags));
     payload.flags = currentFlags;
     payload.client_landmarks_active = !!proctorX;
     socket.emit('student-frame', payload);
@@ -293,6 +326,7 @@ function triggerImmediateUpload() {
       payload.hands = hands;
       payload.metrics = metrics;
     }
+    currentFlags = currentFlags.concat(Array.from(envFlags));
     payload.flags = currentFlags;
     payload.client_landmarks_active = !!proctorX;
     socket.emit('student-frame', payload);
@@ -300,6 +334,7 @@ function triggerImmediateUpload() {
 }
 
 function stopFrameUploads() {
+  stopEnvironmentProbe();
   if (frameTimer) clearInterval(frameTimer);
   frameTimer = null;
   if (proctorX) { proctorX.stop(); proctorX = null; }

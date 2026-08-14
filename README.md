@@ -102,6 +102,39 @@ If the browser engine fails to load, the server falls back to estimating pose fr
 YuNet's five points. That fallback is noticeably noisier — it is a safety net, not
 the intended path.
 
+## What this can and cannot stop
+
+Be clear about the ceiling before relying on it.
+
+**A web page cannot lock down an operating system.** Browser JavaScript runs in a
+sandbox with no view outside itself. It cannot stop a candidate running OBS, a
+remote desktop, a virtual machine, a second computer, or a phone propped beside
+the monitor. No browser-based proctor can, including the commercial ones.
+Everything the client reports is *evidence*, and evidence can be forged by
+someone willing to edit the page.
+
+What raises the cost of cheating here:
+
+| Layer | Catches | Defeated by |
+|---|---|---|
+| Server-side frame analysis | Phones, books, extra faces, identity swaps | Nothing in the browser — the server decides |
+| Client cross-check | A modified client under-reporting what is in shot | Also faking the video itself |
+| Virtual camera probe | OBS, ManyCam, DroidCam and similar feeding fake video | Renaming the virtual device |
+| Second-display probe | Notes or a helper on another monitor | Chromium-only; a second *device* is invisible |
+| Fullscreen / tab / clipboard | Casually leaving the exam page | Editing the page, or a second device |
+| Safe Exam Browser (`REQUIRE_SEB`) | Running anything else on the machine at all | A second device; someone else sitting nearby |
+
+The one genuine barrier is the last row. Safe Exam Browser is a native client
+that owns the machine — it blocks process launching and screen capture, and
+signs every request with a key only a correctly configured build knows. Set
+`REQUIRE_SEB=1` with `SEB_BROWSER_EXAM_KEY`, and an ordinary browser is turned
+away at sign-in rather than merely reported. `/health` shows which mode is
+active.
+
+Even SEB does not stop a phone under the desk. That is what the camera is for,
+and why detection and lockdown are worth having together rather than either
+alone.
+
 ## Layout
 
 ```
@@ -124,6 +157,8 @@ registered_faces/      Reference photos - gitignored, never commit
 | `PORT` | HTTP port (default 5050) |
 | `SECRET_KEY` | Flask session secret |
 | `TURN_URL` / `TURN_USER` / `TURN_PASS` | TURN relay for the live view only |
+| `REQUIRE_SEB` | Set to `1` to refuse anything but Safe Exam Browser |
+| `SEB_BROWSER_EXAM_KEY` / `SEB_CONFIG_KEY` | Keys SEB signs its requests with |
 
 Without TURN, the live view may fail between different networks; the grid is
 unaffected. Check `/api/ice-config` — `relayReady` tells you which state you are in.

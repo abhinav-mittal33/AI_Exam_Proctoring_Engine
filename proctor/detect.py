@@ -29,6 +29,11 @@ OBJ_CONFIDENCE_MIN   = 0.25  # Proctor-X conf threshold
 # Consecutive frame checks required before warning (prevents false alarms)
 REQUIRED_SUSTAINED_CHECKS = 3
 
+# Frames of disagreement between the client's face count and ours before we
+# call it tampering. Deliberately higher than the others: accusing someone of
+# modifying their browser is a serious claim to get wrong.
+TAMPER_SUSTAINED_CHECKS = 4
+
 CHEATING_OBJECT_MAP = {
     "cell phone": "Mobile phone detected in frame",
     "book":       "Book / reference material detected in frame",
@@ -59,6 +64,11 @@ CLIENT_FLAG_REASONS = {
     "EXIT_FULLSCREEN": "Exited fullscreen mode — potential screen share/app switch",
     "SHORTCUT_ATTEMPT": "Keyboard shortcut / right-click block — possible copy-paste attempt",
     "AUDIO_TALKING":   "Loud talking / background voice detected by microphone",
+    "VIRTUAL_CAMERA_ACTIVE":  "Virtual camera is feeding the exam — video may be pre-recorded",
+    "VIRTUAL_CAMERA_PRESENT": "Virtual camera software installed on this machine",
+    "SECOND_DISPLAY":         "A second display is connected",
+    "DEVTOOLS_OPEN":          "Browser developer tools appear to be open",
+    "CLIENT_TAMPERED":        "Candidate's browser is under-reporting — client may be modified",
 }
 
 # How severe each kind of violation is. This drives how long the same violation
@@ -92,6 +102,12 @@ REASON_SEVERITY = {
     # Looking down is where notes and a phone in the lap live, so it is the one
     # gaze direction worth treating as more than a wandering eye.
     CLIENT_FLAG_REASONS["GAZE_DOWN"]:        "HIGH",
+    # Defeating the proctor is treated as seriously as being caught by it.
+    CLIENT_FLAG_REASONS["VIRTUAL_CAMERA_ACTIVE"]:  "CRITICAL",
+    CLIENT_FLAG_REASONS["CLIENT_TAMPERED"]:        "CRITICAL",
+    CLIENT_FLAG_REASONS["VIRTUAL_CAMERA_PRESENT"]: "HIGH",
+    CLIENT_FLAG_REASONS["SECOND_DISPLAY"]:         "HIGH",
+    CLIENT_FLAG_REASONS["DEVTOOLS_OPEN"]:          "HIGH",
     CLIENT_FLAG_REASONS["EYES_CLOSED"]:      "LOW",
 }
 
@@ -126,6 +142,7 @@ class ParticipantState:
     consecutive_talking: int = 0
     last_warned: dict = field(default_factory=dict)
     frame_count: int = 0
+    tamper_streak: int = 0
 
 
 class CheatingDetector:
@@ -235,7 +252,8 @@ class CheatingDetector:
     def analyze(self, enrollment: str, image_data: str,
                 client_flags: list = None, hand_boxes: list = None,
                 client_landmarks_active: bool = False,
-                face_encoding: list = None) -> dict:
+                face_encoding: list = None,
+                client_metrics: dict = None) -> dict:
         result = {"ok": False, "cheating": False, "kick": False, "warning_count": 0, "warning_issued": False, "reasons": [], "debug": {}}
         img = self._decode_image(image_data)
         if img is None:
@@ -365,6 +383,32 @@ class CheatingDetector:
                 if reason:
                     cheating_reasons.append(reason)
             debug["client_flags"] = list(client_flags or [])
+
+            # 5b. Cross-check the browser's account against our own.
+            #
+            # Everything the client reports can be forged by editing the page, so
+            # the one claim worth auditing is the one a cheat would suppress:
+            # that only one person is in shot. This compares the client's face
+            # count with YuNet's on the very same frame and requires the two to
+            # disagree repeatedly before saying anything, since two different
+            # detectors legitimately differ on a borderline frame.
+            claimed = None
+            if isinstance(client_metrics, dict):
+                claimed = client_metrics.get("faces")
+
+            if client_landmarks_active and isinstance(claimed, int):
+                # Only one direction is suspicious: we see more people than the
+                # client admits to. The reverse is just a detector disagreeing.
+                if face_count > claimed:
+                    session.tamper_streak += 1
+                else:
+                    session.tamper_streak = 0
+
+                debug["claimed_faces"] = claimed
+                debug["tamper_streak"] = session.tamper_streak
+
+                if session.tamper_streak >= TAMPER_SUSTAINED_CHECKS:
+                    cheating_reasons.append(CLIENT_FLAG_REASONS["CLIENT_TAMPERED"])
 
             # 6. Biometric Face Verification (candidate substitution/impersonation check)
             # Run this every 5th frame (~15s) when exactly 1 face is present to keep CPU usage low

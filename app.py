@@ -11,6 +11,8 @@ Video design: no WebRTC mesh. The host's grid is built from the frames students
 already upload for detection, so there is nothing to negotiate and no relay to
 configure. WebRTC is used only when the host opens one student for a live look.
 """
+import hashlib
+import hmac
 import os
 import random
 import threading
@@ -78,7 +80,54 @@ def health():
         "status": "ok",
         "detectors": cheating_detector.status(),
         "active_exams": len(exams),
+        "lockdown": "safe-exam-browser" if REQUIRE_SEB else "browser-only",
     })
+
+
+# ---------------------------------------------------------------- lockdown
+#
+# A web page cannot lock down an operating system. Nothing in the browser can
+# stop a candidate running OBS, a remote desktop, a virtual machine, or simply
+# putting a phone next to the monitor - the page has no view outside its own
+# sandbox. Everything the client reports is therefore evidence, not enforcement,
+# and can be forged by someone willing to edit it.
+#
+# Actual lockdown requires a native client that owns the machine. Safe Exam
+# Browser is the standard one: it takes over the display, blocks process
+# launching and screen capture, and signs each request with a key only a
+# correctly configured SEB build knows. Setting REQUIRE_SEB makes that signature
+# mandatory, which is the only setting here that turns evidence into a barrier.
+
+REQUIRE_SEB = os.environ.get("REQUIRE_SEB", "").strip().lower() in ("1", "true", "yes")
+SEB_BROWSER_EXAM_KEY = os.environ.get("SEB_BROWSER_EXAM_KEY", "").strip()
+SEB_CONFIG_KEY = os.environ.get("SEB_CONFIG_KEY", "").strip()
+
+
+def seb_request_ok(environ) -> tuple:
+    """
+    Validates Safe Exam Browser's per-request signature.
+
+    SEB sends sha256(absolute_url + key) for the Browser Exam Key and/or the
+    Config Key. A normal browser sends neither, so an unsigned request means the
+    candidate is not inside the locked-down client.
+    """
+    if not REQUIRE_SEB:
+        return True, None
+    if not (SEB_BROWSER_EXAM_KEY or SEB_CONFIG_KEY):
+        return False, "Lockdown is required but no SEB key is configured on the server."
+
+    url = environ.get("HTTP_ORIGIN", "") + environ.get("PATH_INFO", "")
+    sent_bek = environ.get("HTTP_X_SAFEEXAMBROWSER_REQUESTHASH", "")
+    sent_ck = environ.get("HTTP_X_SAFEEXAMBROWSER_CONFIGKEYHASH", "")
+
+    for key, sent in ((SEB_BROWSER_EXAM_KEY, sent_bek), (SEB_CONFIG_KEY, sent_ck)):
+        if not key or not sent:
+            continue
+        expected = hashlib.sha256((url + key).encode()).hexdigest()
+        if hmac.compare_digest(expected, sent):
+            return True, None
+
+    return False, "This exam must be taken in Safe Exam Browser."
 
 
 # ---------------------------------------------------------------- registration
@@ -190,6 +239,12 @@ def on_student_join(data):
     if not exam:
         return {"ok": False, "error": "No exam found with that code."}
 
+    # Checked before credentials: if lockdown is required, an unsigned client
+    # should be turned away without being told whether the account was valid.
+    allowed, reason = seb_request_ok(request.environ)
+    if not allowed:
+        return {"ok": False, "error": reason}
+
     user = db_manager.verify_user_credentials(enrollment, password)
     if not user:
         return {"ok": False, "error": "Incorrect enrollment number or password."}
@@ -217,6 +272,7 @@ def on_student_join(data):
         "last_frame_at": None,
         "last_frame": None,
         "last_flags": None,
+        "last_metrics": {},
         "last_hands": [],
         "face_encoding": face_record["encoding"],
     }
@@ -258,6 +314,9 @@ def on_student_frame(data):
     # to fall back rather than reading "no flags" as "nothing is wrong".
     student["last_flags"] = (data or {}).get("flags")
     student["last_hands"] = (data or {}).get("hands") or []
+    # Kept so the detector can audit the client's own account of the frame
+    # against what it measures itself.
+    student["last_metrics"] = (data or {}).get("metrics") or {}
     student["client_landmarks_active"] = (data or {}).get("client_landmarks_active", False)
 
     # The host's monitoring grid is just these frames - no WebRTC needed.
@@ -289,7 +348,8 @@ def analyse_frame(student_sid, job):
         client_flags=student.get("last_flags"),
         hand_boxes=student.get("last_hands"),
         client_landmarks_active=student.get("client_landmarks_active", False),
-        face_encoding=student.get("face_encoding")
+        face_encoding=student.get("face_encoding"),
+        client_metrics=student.get("last_metrics"),
     )
     if not result.get("ok"):
         return
