@@ -73,14 +73,30 @@ the main source of false positives.
 
 | Signal | Fires at | Sustained for |
 |---|---|---|
-| Head turned | 28° off resting yaw | 14 frames (~0.9s) |
-| Looking down | 24° off resting pitch | 16 frames (~1.1s) |
-| Head tilted sideways | 25° off resting roll | 16 frames (~1.1s) |
-| Eyes off screen (with direction) | 0.22 iris offset from resting gaze | 16 frames |
-| Eyes **far** off screen | 0.40 iris offset from resting gaze | fires immediately |
+| Head turned | 25° off resting yaw | 14 frames (~0.9s) |
+| Looking down | 22° off resting pitch | 16 frames (~1.1s) |
+| Head tilted sideways | 12° off resting, from the eye line | 11 frames (~0.7s) |
+| Head tilted **sharply** | 22° off resting | fires immediately |
+| Eyes off screen, sideways | 0.20 iris offset from resting gaze | 13 frames |
+| Eyes off screen, up or down | 0.055 iris offset — a *separate* limit, see below | 13 frames |
+| Eyes **far** off screen | 0.36 sideways / 0.095 vertical | fires immediately |
 | Talking | 4 mouth open/close cycles in 3s | 6 frames |
 | Second person | any extra face | 3 frames (~0.2s) |
 | Eyes closed | 50% of resting opening | 20 frames |
+
+Head tilt is measured from the angle of the line between the eyes, not from the
+transformation matrix. The matrix's three Euler angles were mislabelled — a pure
+tilt came back as yaw — so tilting the head was reported as "head turned away"
+and the tilt signal itself could only fire on a nod. The eye line rotates with
+the head and with nothing else, so it needs no assumption about how the matrix
+was ordered, and it is exact: a 25° tilt measures 25.0°.
+
+The two gaze axes carry **separate limits**, because `getGaze` divides both by
+eye *width* and an eye is roughly 2.8× wider than it is tall. Sharing one
+threshold made the vertical axis unreachable — a full look downward only reaches
+about 0.09 against a limit of 0.22 — so `GAZE_DOWN`, the direction that catches
+notes on the desk and a phone in the lap, could never fire at all. Whichever axis
+is proportionally further past its own limit names the direction.
 
 Gaze is graded rather than binary. A wandering eye and a candidate reading from
 a note beside the monitor are not the same act, so there are two tiers: past 0.22
@@ -100,7 +116,7 @@ Violations carry a severity that decides how soon the same one may be reported a
 | Severity | Examples | Repeat after |
 |---|---|---|
 | CRITICAL | second person, identity mismatch, eyes far down | 8s |
-| HIGH | phone or book, talking, tab switch, eyes far off-screen | 15s |
+| HIGH | phone or book, talking, tab switch, eyes far off-screen, sharp head tilt | 15s |
 | MEDIUM | head turned, looking down, head tilt, eyes off-screen | 35s |
 | LOW | eyes closed | 90s |
 

@@ -42,7 +42,19 @@ function getMAR(lm) {
   return horizontal === 0 ? 0 : vertical / horizontal;
 }
 
-/** True 3D head pose from MediaPipe's 4x4 column-major transformation matrix. */
+/**
+ * Head pose from MediaPipe's 4x4 transformation matrix.
+ *
+ * The three Euler angles were previously mislabelled - a pure tilt came back as
+ * yaw, a pure turn came back as pitch - so tilting the head was reported as
+ * "head turned away" and HEAD_TILT could only fire on a nod. For R = Rz·Ry·Rx
+ * the correct extraction is the one below.
+ *
+ * Only magnitudes are trusted here, never signs: MediaPipe's matrix ordering
+ * differs between builds, which flips every sign while leaving magnitudes
+ * intact. Direction comes from landmark geometry instead, which cannot be
+ * ambiguous.
+ */
 function getHeadPose(matrix) {
   const R11 = matrix[0];
   const R21 = matrix[1];
@@ -50,11 +62,25 @@ function getHeadPose(matrix) {
   const R32 = matrix[6];
   const R33 = matrix[10];
 
-  const pitch = Math.atan2(-R31, Math.sqrt(R32 * R32 + R33 * R33)) * (180 / Math.PI);
-  const yaw = Math.atan2(R21, R11) * (180 / Math.PI);
-  const roll = Math.atan2(R32, R33) * (180 / Math.PI);
+  const pitch = Math.atan2(R32, R33) * (180 / Math.PI);
+  const yaw = Math.atan2(-R31, Math.sqrt(R32 * R32 + R33 * R33)) * (180 / Math.PI);
+  const roll = Math.atan2(R21, R11) * (180 / Math.PI);
 
   return { pitch, yaw, roll };
+}
+
+/**
+ * Head tilt straight from the eye line, in degrees.
+ *
+ * Tilting the head is the one pose that landmarks describe perfectly: the line
+ * between the eyes rotates with the head and nothing else moves it. This needs
+ * no matrix, no convention, and no assumption about how the model was exported,
+ * which is why tilt is measured here rather than taken from the Euler angles.
+ */
+function getRollFromEyeLine(lm) {
+  const leftEye = { x: (lm[33].x + lm[133].x) / 2, y: (lm[33].y + lm[133].y) / 2 };
+  const rightEye = { x: (lm[362].x + lm[263].x) / 2, y: (lm[362].y + lm[263].y) / 2 };
+  return Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) * (180 / Math.PI);
 }
 
 /** Iris offset within each eye — where the eyes point, not where the head does. */
@@ -128,12 +154,32 @@ class HysteresisBuffer {
 // - Speech cycles increased: requires more sustained rhythmic mouth movement
 
 const CALIBRATION_FRAMES = 45;   // ~3s at 15fps to learn a resting posture
-const YAW_LIMIT = 28;            // degrees off resting before the head counts as turned (was 22)
-const PITCH_LIMIT = 24;          // degrees off resting before it counts as looking down (was 18)
-const ROLL_LIMIT = 25;           // degrees off resting before the head counts as tilted (was 20)
-const GAZE_LIMIT = 0.22;         // iris offset before the eyes count as off-screen (normal drift, debounced)
-const GAZE_EXTREME = 0.40;       // iris offset for extreme gaze — eyes pointed far off-screen (bypasses hysteresis)
-const EAR_CLOSED_RATIO = 0.50;   // fraction of resting eye opening that counts as shut (was 0.62)
+
+// Pose, in degrees off the candidate's resting posture. Each has a second,
+// larger limit for motion too big to be incidental, which is reported at once
+// instead of waiting out the hysteresis buffer.
+const YAW_LIMIT = 25;            // head turned left or right
+const YAW_EXTREME = 40;
+const PITCH_LIMIT = 22;          // head nodded down
+const PITCH_EXTREME = 35;
+// Tilt comes from the eye line, so this is a true angle and can be tighter than
+// the others: nothing but tilting the head moves it. A deliberate tilt to see
+// past the monitor is 12-20 degrees, well inside what absolute limits missed.
+const ROLL_LIMIT = 12;           // head tilted ear-toward-shoulder
+const ROLL_EXTREME = 22;
+
+// Gaze, as iris offset from the candidate's resting gaze. The vertical axis
+// needs its own, much smaller limits: getGaze divides both axes by eye WIDTH,
+// and an eye is roughly 2.8x wider than it is tall, so a full look downward
+// only reaches about 0.09. Sharing the horizontal limit made GAZE_DOWN - notes
+// on the desk, a phone in the lap - impossible to trigger at all.
+const GAZE_LIMIT_H = 0.20;       // eyes drifted left or right
+const GAZE_EXTREME_H = 0.36;
+const GAZE_LIMIT_V = 0.055;      // eyes drifted up or down
+const GAZE_EXTREME_V = 0.095;
+
+const EAR_CLOSED_RATIO = 0.50;   // fraction of resting eye opening that counts as shut
+const GAZE_EMA_ALPHA = 0.45;     // iris landmarks are jittery; smooth before comparing
 
 // Speech is rhythmic: the jaw opens and closes repeatedly. Counting those cycles
 // catches quiet talking that never opens the mouth far, while ignoring a single
@@ -153,11 +199,15 @@ export class ProctorXEngine {
 
     this.state = {
       yawEma: 0, pitchEma: 0, rollEma: 0,
+      gazeYawEma: 0, gazePitchEma: 0,
+      gazeSeeded: false,  // first gaze frame seeds the EMA rather than easing into it
       marSamples: [],     // {t, mar} over the speech window
       mouthOpen: false,   // for counting open/close cycles
       gazeDirection: null, // LEFT / RIGHT / UP / DOWN when eyes leave the screen
       cycles: [],         // timestamps of mouth openings
-      extremeGazeTriggered: false, // extreme gaze that bypasses hysteresis buffer
+      // Motion too large to be incidental, reported without waiting out the buffer.
+      extremeGaze: false,
+      extremeTilt: false,
     };
 
     // Resting posture, learned in the first few seconds and then used as the
@@ -172,8 +222,8 @@ export class ProctorXEngine {
     this.buffers = {
       lookingAway: new HysteresisBuffer(16, 14, 3),     // was 14/12: more sustained before firing
       lookingDown: new HysteresisBuffer(18, 16, 3),     // was 16/14: natural reading means downward glances
-      headTilt: new HysteresisBuffer(18, 16, 3),        // was 16/14: same reason
-      gazeOff: new HysteresisBuffer(18, 16, 3),         // was 16/14: eyes drift naturally, need sustained drift
+      headTilt: new HysteresisBuffer(14, 11, 3),        // eye-line angle is clean, so needs less proving
+      gazeOff: new HysteresisBuffer(16, 13, 3),         // smoothed now, so it can settle sooner
       noFace: new HysteresisBuffer(12, 10, 2),          // kept: unambiguous event (camera blocked)
       multiFace: new HysteresisBuffer(5, 3, 1),         // kept: unambiguous (second person present)
       talking: new HysteresisBuffer(8, 6, 2),           // was 6/4: requires more sustained rhythmic motion
@@ -266,18 +316,35 @@ export class ProctorXEngine {
       const lm = faces.faceLandmarks[0];
       const matrix = faces.facialTransformationMatrixes && faces.facialTransformationMatrixes[0];
 
-      let yaw = 0, pitch = 0, roll = 0;
+      let yaw = 0, pitch = 0;
       if (matrix) {
         const pose = getHeadPose(matrix.data || matrix);
         this.state.yawEma = calculateEMA(pose.yaw, this.state.yawEma);
         this.state.pitchEma = calculateEMA(pose.pitch, this.state.pitchEma);
-        this.state.rollEma = calculateEMA(pose.roll, this.state.rollEma);
         yaw = this.state.yawEma;
         pitch = this.state.pitchEma;
-        roll = this.state.rollEma;
       }
 
-      const gaze = getGaze(lm);
+      // Tilt is measured from the eye line rather than taken from the matrix.
+      // The Euler angles are only as trustworthy as the matrix ordering, and the
+      // eye line needs no such assumption - it rotates with the head and with
+      // nothing else.
+      this.state.rollEma = calculateEMA(getRollFromEyeLine(lm), this.state.rollEma);
+      const roll = this.state.rollEma;
+
+      const rawGaze = getGaze(lm);
+      // Iris landmarks jitter frame to frame. Smoothing them is what lets the
+      // vertical limits be as tight as they must be without picking up noise.
+      if (!this.state.gazeSeeded) {
+        this.state.gazeYawEma = rawGaze.gazeYaw;
+        this.state.gazePitchEma = rawGaze.gazePitch;
+        this.state.gazeSeeded = true;
+      } else {
+        this.state.gazeYawEma = calculateEMA(rawGaze.gazeYaw, this.state.gazeYawEma, GAZE_EMA_ALPHA);
+        this.state.gazePitchEma = calculateEMA(rawGaze.gazePitch, this.state.gazePitchEma, GAZE_EMA_ALPHA);
+      }
+      const gaze = { gazeYaw: this.state.gazeYawEma, gazePitch: this.state.gazePitchEma };
+
       const ear = getEAR(lm);
       const mar = getMAR(lm);
 
@@ -337,40 +404,38 @@ export class ProctorXEngine {
       headTilt = rollDev > ROLL_LIMIT;
       eyesClosed = ear < n.ear * EAR_CLOSED_RATIO;
 
+      // A tilt far past the limit is nobody's idle posture, so it is reported at
+      // once rather than waiting out the buffer - the same grading gaze uses.
+      this.state.extremeTilt = rollDev > ROLL_EXTREME;
+      metrics.tiltSide = roll > n.roll ? 'RIGHT' : 'LEFT';
+
       // Eyes can leave the screen while the head stays perfectly still, which is
       // exactly how someone reads from a second screen or a note beside them, so
       // gaze is tracked as its own signal rather than as a corollary of pose.
       // Ignored while the eyes are shut, since iris position is meaningless then.
       //
-      // Two-tier detection:
-      // - Normal gaze (0.22 iris offset): goes through hysteresis buffer (debounced)
-      // - Extreme gaze (0.40 iris offset): fires immediately, bypasses buffer
-      //   (extreme means eyes pointed FAR off-screen, definitely intentional)
+      // Each axis is judged against its own limits, because getGaze divides both
+      // by eye width and an eye is far wider than it is tall. Whichever axis is
+      // further past its own limit names the direction, so a glance down and to
+      // the left is reported as the one that dominates rather than whichever
+      // happened to be tested first.
       if (!eyesClosed) {
-        const absGazeYaw = Math.abs(gazeYawDev);
-        const absGazePitch = Math.abs(gazePitchDev);
-        const isExtremeGaze = absGazeYaw > GAZE_EXTREME || absGazePitch > GAZE_EXTREME;
+        const absH = Math.abs(gazeYawDev);
+        const absV = Math.abs(gazePitchDev);
+        // Distance past each limit, as a multiple of that limit, so the two axes
+        // can be compared despite their very different scales.
+        const overH = absH / GAZE_LIMIT_H;
+        const overV = absV / GAZE_LIMIT_V;
 
-        if (absGazeYaw > GAZE_LIMIT) {
+        if (overH > 1 || overV > 1) {
           gazeOff = true;
-          this.state.gazeDirection = gazeYawDev > 0 ? 'LEFT' : 'RIGHT';
-        } else if (absGazePitch > GAZE_LIMIT) {
-          gazeOff = true;
-          this.state.gazeDirection = gazePitchDev > 0 ? 'DOWN' : 'UP';
+          this.state.gazeDirection = overH >= overV
+            ? (gazeYawDev > 0 ? 'LEFT' : 'RIGHT')
+            : (gazePitchDev > 0 ? 'DOWN' : 'UP');
         }
-
-        // Extreme gaze bypasses hysteresis: if eyes are pointed far off-screen,
-        // report it immediately without waiting for the buffer to accumulate.
-        if (isExtremeGaze) {
-          if (absGazeYaw > absGazePitch) {
-            this.state.gazeDirection = gazeYawDev > 0 ? 'LEFT' : 'RIGHT';
-          } else {
-            this.state.gazeDirection = gazePitchDev > 0 ? 'DOWN' : 'UP';
-          }
-          this.state.extremeGazeTriggered = true;
-        } else {
-          this.state.extremeGazeTriggered = false;
-        }
+        this.state.extremeGaze = absH > GAZE_EXTREME_H || absV > GAZE_EXTREME_V;
+      } else {
+        this.state.extremeGaze = false;
       }
       metrics.gazeDirection = gazeOff ? this.state.gazeDirection : null;
       metrics.gazeYawMagnitude = +Math.abs(gazeYawDev).toFixed(3);
@@ -403,29 +468,27 @@ export class ProctorXEngine {
     if (b.multiFace.isTriggered) flags.push('MULTIPLE_FACES');
     if (b.talking.isTriggered) flags.push('TALKING');
     if (b.eyesClosed.isTriggered) flags.push('EYES_CLOSED');
-    if (b.headTilt.isTriggered) flags.push('HEAD_TILT');
+
+    // Tilt, graded the same way gaze is: a slight lean waits out the buffer, a
+    // pronounced one is reported on the frame it happens.
+    if (this.state.extremeTilt) {
+      flags.push('HEAD_TILT_EXTREME');
+    } else if (b.headTilt.isTriggered) {
+      flags.push('HEAD_TILT');
+    }
 
     // Gaze is reported on its own axis. Suppressed only when the head is already
     // turned the same way - that is one act, and head-turn already covers it -
     // but eyes drifting sideways while the head stays still is its own finding.
-    //
-    // Two cases:
-    // 1. Extreme gaze (iris offset > 0.40): fires immediately, no hysteresis wait
-    // 2. Normal gaze (iris offset 0.22-0.40): goes through hysteresis buffer
-    if (this.state.extremeGazeTriggered) {
+    if (gazeOff || this.state.extremeGaze) {
       const dir = this.state.gazeDirection;
       const sameAxisAsHead =
         ((dir === 'LEFT' || dir === 'RIGHT') && lookingAway) ||
         ((dir === 'UP' || dir === 'DOWN') && lookingDown);
-      if (!sameAxisAsHead) {
-        flags.push('GAZE_EXTREME_' + dir);
+      if (dir && !sameAxisAsHead) {
+        if (this.state.extremeGaze) flags.push('GAZE_EXTREME_' + dir);
+        else if (b.gazeOff.isTriggered) flags.push('GAZE_' + dir);
       }
-    } else if (b.gazeOff.isTriggered) {
-      const dir = this.state.gazeDirection;
-      const sameAxisAsHead =
-        ((dir === 'LEFT' || dir === 'RIGHT') && lookingAway) ||
-        ((dir === 'UP' || dir === 'DOWN') && lookingDown);
-      if (!sameAxisAsHead) flags.push('GAZE_' + dir);
     }
 
     // Hand boxes, padded 10%, so the server can tell whether a detected object is
