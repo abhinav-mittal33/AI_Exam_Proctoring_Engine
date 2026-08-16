@@ -73,13 +73,21 @@ the main source of false positives.
 
 | Signal | Fires at | Sustained for |
 |---|---|---|
-| Head turned | 22° off resting yaw | 12 frames (~0.8s) |
-| Looking down | 18° off resting pitch | 14 frames (~0.9s) |
-| Head tilted sideways | 20° off resting roll | 14 frames (~0.9s) |
-| Eyes off screen (with direction) | 0.16 iris offset from resting gaze | 14 frames |
-| Talking | 3 mouth open/close cycles in 2.5s | 4 frames |
+| Head turned | 28° off resting yaw | 14 frames (~0.9s) |
+| Looking down | 24° off resting pitch | 16 frames (~1.1s) |
+| Head tilted sideways | 25° off resting roll | 16 frames (~1.1s) |
+| Eyes off screen (with direction) | 0.22 iris offset from resting gaze | 16 frames |
+| Eyes **far** off screen | 0.40 iris offset from resting gaze | fires immediately |
+| Talking | 4 mouth open/close cycles in 3s | 6 frames |
 | Second person | any extra face | 3 frames (~0.2s) |
-| Eyes closed | 62% of resting opening | 18 frames |
+| Eyes closed | 50% of resting opening | 20 frames |
+
+Gaze is graded rather than binary. A wandering eye and a candidate reading from
+a note beside the monitor are not the same act, so there are two tiers: past 0.22
+iris offset the signal is debounced like any other, but past 0.40 — eyes pointed
+far enough off-screen that it cannot be a glance — it is reported on the frame it
+happens, without waiting for the buffer. Both tiers are still suppressed when the
+head has already turned the same way, since that is one act and head-turn covers it.
 
 Talking is counted as *cycles* rather than raw mouth openness. Quiet speech barely
 opens the mouth and was being missed entirely by a fixed openness threshold, while a
@@ -91,10 +99,10 @@ Violations carry a severity that decides how soon the same one may be reported a
 
 | Severity | Examples | Repeat after |
 |---|---|---|
-| CRITICAL | second person, identity mismatch | 6s |
-| HIGH | phone or book, talking, tab switch | 12s |
-| MEDIUM | head turned, looking down, head tilt | 25s |
-| LOW | eyes closed | 60s |
+| CRITICAL | second person, identity mismatch, eyes far down | 8s |
+| HIGH | phone or book, talking, tab switch, eyes far off-screen | 15s |
+| MEDIUM | head turned, looking down, head tilt, eyes off-screen | 35s |
+| LOW | eyes closed | 90s |
 
 Three warnings removes a candidate automatically.
 

@@ -131,7 +131,8 @@ const CALIBRATION_FRAMES = 45;   // ~3s at 15fps to learn a resting posture
 const YAW_LIMIT = 28;            // degrees off resting before the head counts as turned (was 22)
 const PITCH_LIMIT = 24;          // degrees off resting before it counts as looking down (was 18)
 const ROLL_LIMIT = 25;           // degrees off resting before the head counts as tilted (was 20)
-const GAZE_LIMIT = 0.22;         // iris offset before the eyes count as off-screen (was 0.16)
+const GAZE_LIMIT = 0.22;         // iris offset before the eyes count as off-screen (normal drift, debounced)
+const GAZE_EXTREME = 0.40;       // iris offset for extreme gaze — eyes pointed far off-screen (bypasses hysteresis)
 const EAR_CLOSED_RATIO = 0.50;   // fraction of resting eye opening that counts as shut (was 0.62)
 
 // Speech is rhythmic: the jaw opens and closes repeatedly. Counting those cycles
@@ -156,6 +157,7 @@ export class ProctorXEngine {
       mouthOpen: false,   // for counting open/close cycles
       gazeDirection: null, // LEFT / RIGHT / UP / DOWN when eyes leave the screen
       cycles: [],         // timestamps of mouth openings
+      extremeGazeTriggered: false, // extreme gaze that bypasses hysteresis buffer
     };
 
     // Resting posture, learned in the first few seconds and then used as the
@@ -339,18 +341,40 @@ export class ProctorXEngine {
       // exactly how someone reads from a second screen or a note beside them, so
       // gaze is tracked as its own signal rather than as a corollary of pose.
       // Ignored while the eyes are shut, since iris position is meaningless then.
+      //
+      // Two-tier detection:
+      // - Normal gaze (0.22 iris offset): goes through hysteresis buffer (debounced)
+      // - Extreme gaze (0.40 iris offset): fires immediately, bypasses buffer
+      //   (extreme means eyes pointed FAR off-screen, definitely intentional)
       if (!eyesClosed) {
-        if (Math.abs(gazeYawDev) > GAZE_LIMIT) {
+        const absGazeYaw = Math.abs(gazeYawDev);
+        const absGazePitch = Math.abs(gazePitchDev);
+        const isExtremeGaze = absGazeYaw > GAZE_EXTREME || absGazePitch > GAZE_EXTREME;
+
+        if (absGazeYaw > GAZE_LIMIT) {
           gazeOff = true;
-          // The preview is mirrored for the candidate, but landmark x grows to
-          // the image right, which is the candidate's own left.
           this.state.gazeDirection = gazeYawDev > 0 ? 'LEFT' : 'RIGHT';
-        } else if (Math.abs(gazePitchDev) > GAZE_LIMIT) {
+        } else if (absGazePitch > GAZE_LIMIT) {
           gazeOff = true;
           this.state.gazeDirection = gazePitchDev > 0 ? 'DOWN' : 'UP';
         }
+
+        // Extreme gaze bypasses hysteresis: if eyes are pointed far off-screen,
+        // report it immediately without waiting for the buffer to accumulate.
+        if (isExtremeGaze) {
+          if (absGazeYaw > absGazePitch) {
+            this.state.gazeDirection = gazeYawDev > 0 ? 'LEFT' : 'RIGHT';
+          } else {
+            this.state.gazeDirection = gazePitchDev > 0 ? 'DOWN' : 'UP';
+          }
+          this.state.extremeGazeTriggered = true;
+        } else {
+          this.state.extremeGazeTriggered = false;
+        }
       }
       metrics.gazeDirection = gazeOff ? this.state.gazeDirection : null;
+      metrics.gazeYawMagnitude = +Math.abs(gazeYawDev).toFixed(3);
+      metrics.gazePitchMagnitude = +Math.abs(gazePitchDev).toFixed(3);
 
       // --- speech: count open/close cycles rather than raw openness ---
       // A mouth held open, or one yawn, is a single cycle. Talking is several.
@@ -384,7 +408,19 @@ export class ProctorXEngine {
     // Gaze is reported on its own axis. Suppressed only when the head is already
     // turned the same way - that is one act, and head-turn already covers it -
     // but eyes drifting sideways while the head stays still is its own finding.
-    if (b.gazeOff.isTriggered) {
+    //
+    // Two cases:
+    // 1. Extreme gaze (iris offset > 0.40): fires immediately, no hysteresis wait
+    // 2. Normal gaze (iris offset 0.22-0.40): goes through hysteresis buffer
+    if (this.state.extremeGazeTriggered) {
+      const dir = this.state.gazeDirection;
+      const sameAxisAsHead =
+        ((dir === 'LEFT' || dir === 'RIGHT') && lookingAway) ||
+        ((dir === 'UP' || dir === 'DOWN') && lookingDown);
+      if (!sameAxisAsHead) {
+        flags.push('GAZE_EXTREME_' + dir);
+      }
+    } else if (b.gazeOff.isTriggered) {
       const dir = this.state.gazeDirection;
       const sameAxisAsHead =
         ((dir === 'LEFT' || dir === 'RIGHT') && lookingAway) ||

@@ -68,6 +68,10 @@ CLIENT_FLAG_REASONS = {
     "GAZE_RIGHT":      "Eyes looking right, away from the screen",
     "GAZE_DOWN":       "Eyes looking down — possible notes or a phone in the lap",
     "GAZE_UP":         "Eyes looking up, away from the screen",
+    "GAZE_EXTREME_LEFT":   "Eyes pointed FAR left, away from the screen",
+    "GAZE_EXTREME_RIGHT":  "Eyes pointed FAR right, away from the screen",
+    "GAZE_EXTREME_DOWN":   "Eyes pointed FAR down — possible notes or a phone",
+    "GAZE_EXTREME_UP":     "Eyes pointed FAR up, away from the screen",
     "TAB_SWITCH":      "Tab switched / browser minimized — left exam interface",
     "EXIT_FULLSCREEN": "Exited fullscreen mode — potential screen share/app switch",
     "SHORTCUT_ATTEMPT": "Keyboard shortcut / right-click block — possible copy-paste attempt",
@@ -116,6 +120,12 @@ REASON_SEVERITY = {
     # Looking down is where notes and a phone in the lap live, so it is the one
     # gaze direction worth treating as more than a wandering eye.
     CLIENT_FLAG_REASONS["GAZE_DOWN"]:        "HIGH",
+    # Extreme gaze (iris offset > 0.40) indicates eyes pointed FAR off-screen,
+    # definitely intentional. Fires immediately, no hysteresis wait.
+    CLIENT_FLAG_REASONS["GAZE_EXTREME_LEFT"]:   "HIGH",
+    CLIENT_FLAG_REASONS["GAZE_EXTREME_RIGHT"]:  "HIGH",
+    CLIENT_FLAG_REASONS["GAZE_EXTREME_DOWN"]:   "CRITICAL",
+    CLIENT_FLAG_REASONS["GAZE_EXTREME_UP"]:     "HIGH",
     # Defeating the proctor is treated as seriously as being caught by it.
     CLIENT_FLAG_REASONS["VIRTUAL_CAMERA_ACTIVE"]:  "CRITICAL",
     CLIENT_FLAG_REASONS["CLIENT_TAMPERED"]:        "CRITICAL",
