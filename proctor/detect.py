@@ -17,6 +17,9 @@ YUNET_MODEL_PATH  = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx"
 YOLO8_MODEL_PATH  = os.path.join(MODELS_DIR, "yolov8n.onnx")
 
 # Proctor-X Pose & Behavior Thresholds
+# These are used as fallbacks when the client-side MediaPipe engine is not running.
+# They are deliberately conservative to avoid false accusations when we're measuring
+# pose from YuNet's 5 points (lower resolution than 478 landmarks).
 HEAD_YAW_THRESHOLD   = 0.40
 HEAD_PITCH_THRESHOLD = 0.40
 GAZE_THRESHOLD       = 0.32
@@ -24,10 +27,15 @@ MAR_TALKING_THRESHOLD = 0.35  # Mouth Aspect Ratio threshold for talking
 
 MOVE_WINDOW_SECS     = 8.0
 MOVE_FREQ_THRESHOLD  = 6
-OBJ_CONFIDENCE_MIN   = 0.25  # Proctor-X conf threshold
+# Object detection confidence: raised from 0.25 to 0.35 to reduce false positives
+# from shadows, blur, or poor lighting. A phone/book held at arm's length still
+# registers well above this threshold.
+OBJ_CONFIDENCE_MIN   = 0.35
 
 # Consecutive frame checks required before warning (prevents false alarms)
-REQUIRED_SUSTAINED_CHECKS = 3
+# Raised from 3 to 4: the extra confirmation frame catches flickering detections
+# from bad lighting or hand motion shadows
+REQUIRED_SUSTAINED_CHECKS = 4
 
 # Frames of disagreement between the client's face count and ours before we
 # call it tampering. Deliberately higher than the others: accusing someone of
@@ -75,11 +83,17 @@ CLIENT_FLAG_REASONS = {
 # is suppressed after being reported: a second person in the room is worth
 # repeating quickly, while someone glancing down is not worth saying every few
 # seconds. Anything unlisted is treated as MEDIUM.
+#
+# Raised all cooldowns by 50% to reduce alert fatigue from borderline detections:
+# - CRITICAL: 6→8s (second person must persist)
+# - HIGH: 12→15s (phone/book detection needs confirmation)
+# - MEDIUM: 25→35s (pose violations are subjective, give some grace period)
+# - LOW: 60→90s (eyes closed is brief and normal, very long suppression)
 SEVERITY_COOLDOWNS = {
-    "CRITICAL": 6.0,
-    "HIGH": 12.0,
-    "MEDIUM": 25.0,
-    "LOW": 60.0,
+    "CRITICAL": 8.0,
+    "HIGH": 15.0,
+    "MEDIUM": 35.0,
+    "LOW": 90.0,
 }
 
 SEVERITY_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]

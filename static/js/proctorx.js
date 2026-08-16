@@ -118,20 +118,28 @@ class HysteresisBuffer {
 // posture, not absolute angles. Absolute limits punish anyone who naturally
 // sits at an angle or has their webcam mounted off-centre, which is where most
 // of the false positives came from.
+//
+// These were tuned down from initial values to reduce false positives:
+// - Pose angles increased: natural head motion during reading is larger than
+//   we initially expected
+// - Gaze limit increased: eyes naturally drift small amounts without intent to
+//   leave the screen
+// - Eyes-closed ratio increased: minor squints and blinks shouldn't count
+// - Speech cycles increased: requires more sustained rhythmic mouth movement
 
 const CALIBRATION_FRAMES = 45;   // ~3s at 15fps to learn a resting posture
-const YAW_LIMIT = 22;            // degrees off resting before the head counts as turned
-const PITCH_LIMIT = 18;          // degrees off resting before it counts as looking down
-const ROLL_LIMIT = 20;           // degrees off resting before the head counts as tilted
-const GAZE_LIMIT = 0.16;         // iris offset before the eyes count as off-screen
-const EAR_CLOSED_RATIO = 0.62;   // fraction of resting eye opening that counts as shut
+const YAW_LIMIT = 28;            // degrees off resting before the head counts as turned (was 22)
+const PITCH_LIMIT = 24;          // degrees off resting before it counts as looking down (was 18)
+const ROLL_LIMIT = 25;           // degrees off resting before the head counts as tilted (was 20)
+const GAZE_LIMIT = 0.22;         // iris offset before the eyes count as off-screen (was 0.16)
+const EAR_CLOSED_RATIO = 0.50;   // fraction of resting eye opening that counts as shut (was 0.62)
 
 // Speech is rhythmic: the jaw opens and closes repeatedly. Counting those cycles
 // catches quiet talking that never opens the mouth far, while ignoring a single
 // yawn or a mouth simply held open - both of which are one cycle, not several.
-const MAR_SPEECH_DELTA = 0.030;  // opening above resting that counts as "open"
-const SPEECH_WINDOW_MS = 2500;   // window over which cycles are counted
-const SPEECH_MIN_CYCLES = 3;     // open/close cycles in that window to call it speech
+const MAR_SPEECH_DELTA = 0.035;  // opening above resting that counts as "open" (was 0.030)
+const SPEECH_WINDOW_MS = 3000;   // window over which cycles are counted (was 2500, more time = less hair-trigger)
+const SPEECH_MIN_CYCLES = 4;     // open/close cycles in that window to call it speech (was 3)
 
 // ---------- engine ----------
 
@@ -156,15 +164,18 @@ export class ProctorXEngine {
 
     // Frames each signal must hold before it counts. Serious, unambiguous things
     // (a second person) fire fast; subjective ones need more evidence.
+    // Tuned to reduce false positives: pose signals need to hold longer, talking
+    // needs more sustained rhythm, eye closure needs deeper closure, gaze needs
+    // to drift further and hold longer.
     this.buffers = {
-      lookingAway: new HysteresisBuffer(14, 12, 3),
-      lookingDown: new HysteresisBuffer(16, 14, 3),
-      headTilt: new HysteresisBuffer(16, 14, 3),
-      gazeOff: new HysteresisBuffer(16, 14, 3),
-      noFace: new HysteresisBuffer(12, 10, 2),
-      multiFace: new HysteresisBuffer(5, 3, 1),
-      talking: new HysteresisBuffer(6, 4, 2),
-      eyesClosed: new HysteresisBuffer(20, 18, 2),
+      lookingAway: new HysteresisBuffer(16, 14, 3),     // was 14/12: more sustained before firing
+      lookingDown: new HysteresisBuffer(18, 16, 3),     // was 16/14: natural reading means downward glances
+      headTilt: new HysteresisBuffer(18, 16, 3),        // was 16/14: same reason
+      gazeOff: new HysteresisBuffer(18, 16, 3),         // was 16/14: eyes drift naturally, need sustained drift
+      noFace: new HysteresisBuffer(12, 10, 2),          // kept: unambiguous event (camera blocked)
+      multiFace: new HysteresisBuffer(5, 3, 1),         // kept: unambiguous (second person present)
+      talking: new HysteresisBuffer(8, 6, 2),           // was 6/4: requires more sustained rhythmic motion
+      eyesClosed: new HysteresisBuffer(24, 20, 3),      // was 20/18: only extended closure, not blinks/squints
     };
 
     this.latest = { flags: [], hands: [], metrics: {}, calibrating: true };
