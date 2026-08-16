@@ -27,10 +27,26 @@ MAR_TALKING_THRESHOLD = 0.35  # Mouth Aspect Ratio threshold for talking
 
 MOVE_WINDOW_SECS     = 8.0
 MOVE_FREQ_THRESHOLD  = 6
-# Object detection confidence: raised from 0.25 to 0.35 to reduce false positives
-# from shadows, blur, or poor lighting. A phone/book held at arm's length still
-# registers well above this threshold.
-OBJ_CONFIDENCE_MIN   = 0.35
+# Object detection confidence, per class rather than one figure for all three.
+#
+# A single threshold has to serve two opposite needs. A phone is small, often
+# half-hidden by the fingers holding it, and frequently dark against a dark
+# room - yolov8n scores it low even when it is plainly there, and it is the item
+# that matters most. A laptop is large and unmistakable, but a monitor, a TV or
+# the candidate's own screen reflected in a window all look like one, so it needs
+# a high bar to stay quiet. Splitting them lets each sit where it belongs.
+OBJ_CONFIDENCE = {
+    "cell phone": 0.28,
+    "book":       0.38,
+    "laptop":     0.48,
+}
+OBJ_CONFIDENCE_MIN = min(OBJ_CONFIDENCE.values())  # kept for status reporting
+
+# How much the bar drops for an object overlapping a tracked hand.
+HELD_CONFIDENCE_RELIEF = 0.10
+
+NMS_IOU = 0.45                  # overlap above which two boxes are the same object
+MAX_DETECTIONS_PER_CLASS = 8    # enough for several phones; caps the NMS cost
 
 # Consecutive frame checks required before warning (prevents false alarms)
 # Raised from 3 to 4: the extra confirmation frame catches flickering detections
@@ -550,9 +566,8 @@ class CheatingDetector:
         """
         results = []
         try:
-            blob = cv2.resize(img, (YOLO_INPUT_SIZE, YOLO_INPUT_SIZE))
-            blob = cv2.cvtColor(blob, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-            blob = np.transpose(blob, (2, 0, 1))[np.newaxis, ...]
+            src_h, src_w = img.shape[:2]
+            blob, scale, pad_x, pad_y = self._letterbox(img)
 
             out = self._yolo.run(None, {self._yolo_input: blob})[0]
 
@@ -563,24 +578,103 @@ class CheatingDetector:
             scores = preds[4:, :]
 
             for cls_id, name in TARGET_OBJECT_CLASSES.items():
+                floor = OBJ_CONFIDENCE[name] - HELD_CONFIDENCE_RELIEF
                 class_scores = scores[cls_id]
-                best = int(np.argmax(class_scores))
-                if float(class_scores[best]) < OBJ_CONFIDENCE_MIN:
+
+                # Every anchor above the lowest bar this class could qualify at,
+                # rather than the single best one. The strongest detection is not
+                # always the interesting one: a phone face-down on the desk can
+                # outscore the phone actually in the candidate's hand, and it was
+                # masking it entirely.
+                idx = np.nonzero(class_scores >= floor)[0]
+                if idx.size == 0:
                     continue
 
-                # Straight resize (no letterbox), so normalising by the input size
-                # maps back onto the original frame proportionally.
-                cx, cy, w, h = (float(v) / YOLO_INPUT_SIZE for v in boxes[:, best])
-                box = (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+                cand = []
+                for i in idx:
+                    cx, cy, w, h = (float(v) for v in boxes[:, i])
+                    # Undo the letterbox, then normalise against the original
+                    # frame so these share a coordinate space with the hand boxes.
+                    x1 = ((cx - w / 2) - pad_x) / scale / src_w
+                    y1 = ((cy - h / 2) - pad_y) / scale / src_h
+                    x2 = ((cx + w / 2) - pad_x) / scale / src_w
+                    y2 = ((cy + h / 2) - pad_y) / scale / src_h
+                    cand.append((float(class_scores[i]), (x1, y1, x2, y2)))
 
-                if self._overlaps_hand(box, hand_boxes or []):
-                    results.append((name, f"{name.title()} held in hand — prohibited item in use"))
-                else:
-                    results.append((name, CHEATING_OBJECT_MAP[name]))
+                best_reason = None
+                best_score = -1.0
+                for score, box in self._nms(cand):
+                    held = self._overlaps_hand(box, hand_boxes or [])
+                    # An object overlapping a tracked hand is allowed a lower bar.
+                    # Two independent weak signals - a shape that looks like a
+                    # phone, and a hand closed around it - are together far better
+                    # evidence than either alone, and a phone gripped in the hand
+                    # is exactly the case a flat threshold kept missing because
+                    # the fingers hide half of it.
+                    needed = OBJ_CONFIDENCE[name] - (HELD_CONFIDENCE_RELIEF if held else 0.0)
+                    if score < needed:
+                        continue
+                    # Held beats merely present, and within that, the most
+                    # confident wins - so one object yields one reason.
+                    rank = score + (1.0 if held else 0.0)
+                    if rank > best_score:
+                        best_score = rank
+                        best_reason = (
+                            f"{name.title()} held in hand — prohibited item in use"
+                            if held else CHEATING_OBJECT_MAP[name]
+                        )
+
+                if best_reason:
+                    results.append((name, best_reason))
 
         except Exception as e:
             print(f"[CheatingDetector] Object detect error: {e}")
         return results
+
+    @staticmethod
+    def _letterbox(img: np.ndarray):
+        """
+        Scales into the model's square input while preserving aspect ratio.
+
+        A straight resize stretches a 4:3 webcam frame by a third vertically.
+        YOLOv8 was trained on aspect-preserved input, and a phone is defined by
+        its rectangular shape more than anything else, so distorting it is
+        precisely the wrong thing to do to the object we care most about.
+        """
+        h, w = img.shape[:2]
+        scale = min(YOLO_INPUT_SIZE / w, YOLO_INPUT_SIZE / h)
+        nw, nh = int(round(w * scale)), int(round(h * scale))
+        pad_x, pad_y = (YOLO_INPUT_SIZE - nw) // 2, (YOLO_INPUT_SIZE - nh) // 2
+
+        canvas = np.full((YOLO_INPUT_SIZE, YOLO_INPUT_SIZE, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = cv2.resize(img, (nw, nh))
+
+        blob = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        blob = np.transpose(blob, (2, 0, 1))[np.newaxis, ...]
+        return blob, scale, float(pad_x), float(pad_y)
+
+    @staticmethod
+    def _nms(candidates: list) -> list:
+        """Keeps the best of each cluster of overlapping boxes for one class."""
+        kept = []
+        for score, box in sorted(candidates, key=lambda c: c[0], reverse=True):
+            if all(CheatingDetector._iou(box, k[1]) < NMS_IOU for k in kept):
+                kept.append((score, box))
+            if len(kept) >= MAX_DETECTIONS_PER_CLASS:
+                break
+        return kept
+
+    @staticmethod
+    def _iou(a, b) -> float:
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+        if ix1 >= ix2 or iy1 >= iy2:
+            return 0.0
+        inter = (ix2 - ix1) * (iy2 - iy1)
+        area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+        area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+        union = area_a + area_b - inter
+        return inter / union if union > 0 else 0.0
 
     @staticmethod
     def _overlaps_hand(box, hand_boxes) -> bool:
